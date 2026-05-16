@@ -29,8 +29,10 @@ export default function Beneficiarios() {
   const { socioId } = useParams()
   const navigate = useNavigate()
   const { showToast, ToastComponent } = useToast()
-  const { puedeEditar } = useAuth()
+  const { user, puedeEditar } = useAuth()
   const editable = puedeEditar('beneficiarios')
+  const esSocio = user?.rol === 'socio'
+  const miSocioId = user?.socio_id
   const [socios, setSocios] = useState([])
   const [allBeneficiarios, setAllBeneficiarios] = useState([])
   const [panelAbierto, setPanelAbierto] = useState(null)
@@ -58,14 +60,18 @@ export default function Beneficiarios() {
   }, [socioId, socios])
 
   const loadSocios = async () => {
-    const { data } = await supabase.from('socios')
+    let q = supabase.from('socios')
       .select('id,nombre,apellido,numero_socio,rut,estado')
       .order('numero_socio')
+    if (esSocio && miSocioId) q = q.eq('id', miSocioId)
+    const { data } = await q
     setSocios(data || [])
   }
 
   const loadAllBeneficiarios = async () => {
-    const { data } = await supabase.from('beneficiarios').select('*').order('socio_id')
+    let q = supabase.from('beneficiarios').select('*').order('socio_id')
+    if (esSocio && miSocioId) q = q.eq('socio_id', miSocioId)
+    const { data } = await q
     setAllBeneficiarios(data || [])
   }
 
@@ -224,11 +230,13 @@ export default function Beneficiarios() {
 
       <div className="card">
         <div className="card-header">
-          <div className="card-title"><i className="ti ti-users"></i> Socios y beneficiarios</div>
-          <button className="btn" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)' }}
-            onClick={handleExportar} disabled={exportando}>
-            {exportando ? <><i className="ti ti-loader"></i> Exportando…</> : <><i className="ti ti-file-spreadsheet"></i> Exportar Excel</>}
-          </button>
+          <div className="card-title"><i className="ti ti-users"></i> {esSocio ? 'Mis beneficiarios' : 'Socios y beneficiarios'}</div>
+          {!esSocio && (
+            <button className="btn" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)' }}
+              onClick={handleExportar} disabled={exportando}>
+              {exportando ? <><i className="ti ti-loader"></i> Exportando…</> : <><i className="ti ti-file-spreadsheet"></i> Exportar Excel</>}
+            </button>
+          )}
         </div>
 
         {/* Filtros */}

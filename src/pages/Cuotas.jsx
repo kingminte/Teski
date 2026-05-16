@@ -13,8 +13,10 @@ const FORMAS_PAGO = [
 
 export default function Cuotas() {
   const { showToast, ToastComponent } = useToast()
-  const { puedeEditar } = useAuth()
+  const { user, puedeEditar } = useAuth()
   const editable = puedeEditar('cuotas')
+  const esSocio = user?.rol === 'socio'
+  const miSocioId = user?.socio_id
   const [periodos, setPeriodos] = useState([])
   const [selectedPeriodo, setSelectedPeriodo] = useState(null)
   const [socios, setSocios] = useState([])
@@ -41,11 +43,13 @@ export default function Cuotas() {
   useEffect(() => {
     if (!selectedPeriodo) return
     const anio = selectedPeriodo.anio
-    supabase
+    let query = supabase
       .from('socios')
       .select('id,nombre,apellido,numero_socio,fecha_ingreso,fecha_inactividad,estado')
       .lte('fecha_ingreso', `${anio}-12-31`)
       .order('numero_socio')
+    if (esSocio && miSocioId) query = query.eq('id', miSocioId)
+    query
       .then(({ data }) => {
         // Filtrar inactivos que se fueron antes del año
         const filtrados = (data || []).filter(s => {
@@ -208,7 +212,7 @@ export default function Cuotas() {
         {editable && <button className="btn btn-primary" onClick={() => setShowModalPeriodo(true)}>
           <i className="ti ti-plus"></i> Nuevo período anual
         </button>}
-        {selectedPeriodo && (
+        {!esSocio && selectedPeriodo && (
           <button className="btn" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)', marginLeft: 'auto' }}
             onClick={handleExportar} disabled={exportando}>
             {exportando ? <><i className="ti ti-loader"></i> Exportando…</> : <><i className="ti ti-file-spreadsheet"></i> Exportar Excel</>}
@@ -216,16 +220,34 @@ export default function Cuotas() {
         )}
       </div>
 
+      {/* Aviso para socios sin vinculación */}
+      {esSocio && !miSocioId && (
+        <div className="empty-state">
+          <i className="ti ti-alert-circle"></i>
+          Tu cuenta no está vinculada a un socio. Contacta al administrador.
+        </div>
+      )}
+
       {/* Stats */}
-      {selectedPeriodo && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: '1.5rem' }}>
-            {[
+      {selectedPeriodo && (!esSocio || miSocioId) && (() => {
+        const miPagado = esSocio && socios[0] ? (pagosPorSocio[socios[0].id]?.total || 0) : 0
+        const miPendiente = esSocio ? Math.max(0, montoAnual - miPagado) : 0
+        const stats = esSocio
+          ? [
+              { label: `Cuota ${selectedPeriodo.anio}`, value: `$${montoAnual.toLocaleString('es-CL')}`, color: 'var(--gold-light)' },
+              { label: 'Pagado', value: `$${miPagado.toLocaleString('es-CL')}`, color: '#5dcaa5' },
+              { label: 'Pendiente', value: miPendiente > 0 ? `$${miPendiente.toLocaleString('es-CL')}` : 'Al día', color: miPendiente > 0 ? '#fac775' : 'var(--text-muted)' },
+            ]
+          : [
               { label: 'Año', value: selectedPeriodo.anio, color: 'var(--gold-light)' },
               { label: 'Cuota anual', value: `$${montoAnual.toLocaleString('es-CL')}`, color: 'var(--gold-light)' },
               { label: 'Total recaudado', value: `$${totalRecaudado.toLocaleString('es-CL')}`, color: '#5dcaa5' },
               { label: 'Socios con pago', value: `${sociosConPago} / ${socios.length}`, color: '#fac775' },
-            ].map(s => (
+            ]
+        return (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${stats.length},1fr)`, gap: 12, marginBottom: '1.5rem' }}>
+            {stats.map(s => (
               <div key={s.label} style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '1rem' }}>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>{s.label}</div>
                 <div style={{ fontSize: 20, fontWeight: 'bold', color: s.color }}>{s.value}</div>
@@ -234,17 +256,19 @@ export default function Cuotas() {
           </div>
 
           {/* Buscador */}
-          <div style={{ marginBottom: '1rem' }}>
-            <div className="search-box" style={{ width: 280 }}>
-              <i className="ti ti-search"></i>
-              <input placeholder="Buscar socio…" value={filtroSocio} onChange={e => setFiltroSocio(e.target.value)} />
+          {!esSocio && (
+            <div style={{ marginBottom: '1rem' }}>
+              <div className="search-box" style={{ width: 280 }}>
+                <i className="ti ti-search"></i>
+                <input placeholder="Buscar socio…" value={filtroSocio} onChange={e => setFiltroSocio(e.target.value)} />
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Tabla por socio */}
           <div className="card">
             <div className="card-header">
-              <div className="card-title"><i className="ti ti-receipt"></i> Pagos por socio — {selectedPeriodo.anio}</div>
+              <div className="card-title"><i className="ti ti-receipt"></i> {esSocio ? `Mi estado de cuotas — ${selectedPeriodo.anio}` : `Pagos por socio — ${selectedPeriodo.anio}`}</div>
             </div>
             {loading ? (
               <div className="empty-state"><i className="ti ti-loader"></i>Cargando…</div>
@@ -476,7 +500,8 @@ export default function Cuotas() {
             </div>
           )}
         </>
-      )}
+        )
+      })()}
 
       {periodos.length === 0 && (
         <div className="empty-state" style={{ marginTop: '2rem' }}>

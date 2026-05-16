@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
+import { useAuth } from '../lib/useAuth'
 
 const RELACIONES = {
   conyuge: 'Cónyuge',
@@ -24,6 +25,9 @@ const relacionStyle = (rel) => {
 
 export default function SociosActivos() {
   const { showToast, ToastComponent } = useToast()
+  const { user } = useAuth()
+  const esSocio = user?.rol === 'socio'
+  const miSocioId = user?.socio_id
   const [socios, setSocios] = useState([])
   const [beneficiarios, setBeneficiarios] = useState([])
   const [loading, setLoading] = useState(true)
@@ -34,10 +38,13 @@ export default function SociosActivos() {
 
   const loadAll = async () => {
     setLoading(true)
-    const [sRes, bRes] = await Promise.all([
-      supabase.from('socios').select('id,numero_socio,nombre,apellido,rut,email').eq('estado', 'activo').order('numero_socio'),
-      supabase.from('beneficiarios').select('id,socio_id,nombre,apellido,rut,relacion').order('socio_id'),
-    ])
+    let sQ = supabase.from('socios').select('id,numero_socio,nombre,apellido,rut,email').eq('estado', 'activo').order('numero_socio')
+    let bQ = supabase.from('beneficiarios').select('id,socio_id,nombre,apellido,rut,relacion').order('socio_id')
+    if (esSocio && miSocioId) {
+      sQ = sQ.eq('id', miSocioId)
+      bQ = bQ.eq('socio_id', miSocioId)
+    }
+    const [sRes, bRes] = await Promise.all([sQ, bQ])
     setSocios(sRes.data || [])
     setBeneficiarios(bRes.data || [])
     setLoading(false)
@@ -128,9 +135,11 @@ export default function SociosActivos() {
               <i className="ti ti-search"></i>
               <input placeholder="Buscar nombre, RUT o N° socio…" value={busqueda} onChange={e => setBusqueda(e.target.value)} />
             </div>
-            <button className="btn btn-sm" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)' }} onClick={handleExportar} disabled={exportando}>
-              {exportando ? <><i className="ti ti-loader"></i> Exportando…</> : <><i className="ti ti-file-spreadsheet"></i> Descargar Excel</>}
-            </button>
+            {!esSocio && (
+              <button className="btn btn-sm" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)' }} onClick={handleExportar} disabled={exportando}>
+                {exportando ? <><i className="ti ti-loader"></i> Exportando…</> : <><i className="ti ti-file-spreadsheet"></i> Descargar Excel</>}
+              </button>
+            )}
           </div>
         </div>
 
