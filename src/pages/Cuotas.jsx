@@ -33,11 +33,17 @@ export default function Cuotas() {
   const [detalleSocioId, setDetalleSocioId] = useState(null)
   const [editPago, setEditPago] = useState(null)
   const [exportando, setExportando] = useState(false)
+  const [misCheques, setMisCheques] = useState([])
 
   useEffect(() => {
     loadPeriodos()
     supabase.from('cheques').select('id,numero,monto,estado,concepto,fecha_deposito').eq('estado','por_depositar').eq('concepto','cuota_social').then(({ data }) => setCheques(data || []))
   }, [])
+
+  useEffect(() => {
+    if (!esSocio || !miSocioId) { setMisCheques([]); return }
+    supabase.from('cheques').select('*').eq('socio_id', miSocioId).order('fecha_deposito', { ascending: true }).then(({ data }) => setMisCheques(data || []))
+  }, [esSocio, miSocioId])
 
   // Cargar socios filtrados por año del período seleccionado
   useEffect(() => {
@@ -505,6 +511,81 @@ export default function Cuotas() {
             </div>
             )
           })()}
+
+          {/* Cheques entregados por el socio */}
+          {esSocio && misCheques.length > 0 && (
+            <div className="card" style={{ marginTop: '1rem' }}>
+              <div className="card-header">
+                <div className="card-title"><i className="ti ti-writing"></i> Mis cheques entregados</div>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                  {misCheques.length} cheque(s) · {misCheques.filter(c => c.estado === 'por_depositar').length} por depositar
+                </span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10, padding: '1rem 1.25rem', borderBottom: '0.5px solid var(--border)' }}>
+                <div style={{ background: 'var(--navy-mid)', borderRadius: 8, padding: '0.75rem 1rem' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Total cheques</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold' }}>{misCheques.length}</div>
+                </div>
+                <div style={{ background: 'var(--navy-mid)', borderRadius: 8, padding: '0.75rem 1rem' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Depositados</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold', color: '#5dcaa5' }}>
+                    {misCheques.filter(c => c.estado === 'depositado').length}
+                  </div>
+                </div>
+                <div style={{ background: 'var(--navy-mid)', borderRadius: 8, padding: '0.75rem 1rem' }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Por depositar</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold', color: '#fac775' }}>
+                    {misCheques.filter(c => c.estado === 'por_depositar').length}
+                  </div>
+                </div>
+              </div>
+
+              {['cuota_social', 'incorporacion'].map(concepto => {
+                const chequesConcepto = misCheques.filter(c => c.concepto === concepto)
+                if (chequesConcepto.length === 0) return null
+                const totalConcepto = chequesConcepto.reduce((t, c) => t + c.monto, 0)
+                const totalDepositado = chequesConcepto.filter(c => c.estado === 'depositado').reduce((t, c) => t + c.monto, 0)
+                return (
+                  <div key={concepto}>
+                    <div style={{ padding: '0.75rem 1.25rem', borderBottom: '0.5px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>
+                        {concepto === 'cuota_social' ? 'Cuota social' : 'Incorporación'}
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, fontFamily: 'sans-serif' }}>
+                          {chequesConcepto.length} cheque(s) · {formatearMontoConSimbolo(totalConcepto)}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 12, color: '#5dcaa5', fontFamily: 'sans-serif' }}>
+                        Cobrado: {formatearMontoConSimbolo(totalDepositado)} de {formatearMontoConSimbolo(totalConcepto)}
+                      </div>
+                    </div>
+                    <table>
+                      <thead>
+                        <tr><th>N° Cheque</th><th>Monto</th><th>F. depósito</th><th>Banco</th><th>Estado</th></tr>
+                      </thead>
+                      <tbody>
+                        {chequesConcepto.map(c => (
+                          <tr key={c.id}>
+                            <td><span className="chip">{c.numero}</span></td>
+                            <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>{formatearMontoConSimbolo(c.monto)}</td>
+                            <td style={{ color: 'var(--text-muted)' }}>
+                              {c.fecha_deposito ? c.fecha_deposito.split('-').reverse().join('/') : '—'}
+                            </td>
+                            <td style={{ color: 'var(--text-muted)' }}>{c.banco_destino || c.banco_emisor || '—'}</td>
+                            <td>
+                              {c.estado === 'depositado' && <span className="badge badge-active">Depositado</span>}
+                              {c.estado === 'por_depositar' && <span className="badge badge-pending">Por depositar</span>}
+                              {c.estado === 'anulado' && <span className="badge badge-inactive">Anulado</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </>
         )
       })()}
