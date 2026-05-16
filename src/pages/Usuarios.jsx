@@ -174,7 +174,7 @@ export default function Usuarios() {
           username: form.username.trim().toLowerCase(),
           email: form.email || null,
           rol: form.rol,
-          socio_id: form.rol === 'socio' ? (form.socio_id || null) : null,
+          socio_id: form.socio_id || null,
         }
         if (form.password) payload.password_hash = await hashPassword(form.password)
         ;({ error } = await supabase.from('usuarios').update(payload).eq('id', editId))
@@ -186,7 +186,7 @@ export default function Usuarios() {
           email: form.email || null,
           password_hash: passwordHash,
           rol: form.rol,
-          socio_id: form.rol === 'socio' ? (form.socio_id || null) : null,
+          socio_id: form.socio_id || null,
         }
         ;({ error } = await supabase.from('usuarios').insert(payload))
       }
@@ -467,21 +467,20 @@ export default function Usuarios() {
                     )}
                   </div>
                   <div className="form-group"><label>Rol *</label>
-                    <select value={form.rol} onChange={e => setForm(f => ({ ...f, rol: e.target.value, socio_id: e.target.value === 'socio' ? f.socio_id : '' }))}>
+                    <select value={form.rol} onChange={e => setForm(f => ({ ...f, rol: e.target.value }))}>
                       {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                     </select>
                   </div>
-                  {!esSocio && form.rol !== 'socio' && (
+                  {esSocio ? (
+                    <div className="form-group"><label>Socio vinculado</label>
+                      <input value={socios.find(s => s.id === form.socio_id)?.numero_socio || ''} disabled />
+                    </div>
+                  ) : (
                     <div className="form-group"><label>Vincular a socio (opcional)</label>
                       <select value={form.socio_id} onChange={e => setForm(f => ({ ...f, socio_id: e.target.value }))}>
                         <option value="">Sin vincular</option>
                         {socios.map(s => <option key={s.id} value={s.id}>{s.numero_socio} — {s.nombre} {s.apellido}</option>)}
                       </select>
-                    </div>
-                  )}
-                  {esSocio && form.rol === 'socio' && (
-                    <div className="form-group"><label>Socio vinculado</label>
-                      <input value={socios.find(s => s.id === form.socio_id)?.numero_socio || ''} disabled />
                     </div>
                   )}
                 </div>
