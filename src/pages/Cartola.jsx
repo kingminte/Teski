@@ -47,6 +47,7 @@ export default function Cartola() {
   const [conciliando, setConciliando] = useState({})
   const [pagosSinConciliar, setPagosSinConciliar] = useState([])
   const [filtroPagosSC, setFiltroPagosSC] = useState('todos')
+  const [periodoPagosSC, setPeriodoPagosSC] = useState('todos')
 
   const loadPagosSinConciliar = async () => {
     const { data } = await supabase
@@ -929,12 +930,23 @@ export default function Cartola() {
         </>
       )}
       {vista === 'sin_conciliar' && (() => {
-        const pagosFiltradosSC = pagosSinConciliar.filter(p => filtroPagosSC === 'todos' || p.forma_pago === filtroPagosSC)
+        const pagosFiltradosSC = pagosSinConciliar.filter(p => {
+          if (filtroPagosSC !== 'todos' && p.forma_pago !== filtroPagosSC) return false
+          if (periodoPagosSC !== 'todos' && p.periodo_id !== periodoPagosSC) return false
+          return true
+        })
         const sum = (arr) => arr.reduce((t, p) => t + (p.monto || 0), 0)
-        const transferencias = pagosSinConciliar.filter(p => p.forma_pago === 'transferencia')
-        const chequesP = pagosSinConciliar.filter(p => p.forma_pago === 'cheque')
+        const transferencias = pagosFiltradosSC.filter(p => p.forma_pago === 'transferencia')
+        const chequesP = pagosFiltradosSC.filter(p => p.forma_pago === 'cheque')
         return (
           <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif' }}>Período:</span>
+              <select value={periodoPagosSC} onChange={e => setPeriodoPagosSC(e.target.value)} style={{ fontSize: 13, width: 'auto' }}>
+                <option value="todos">Todos los períodos</option>
+                {periodos.map(p => <option key={p.id} value={p.id}>{p.anio} — {formatearMontoConSimbolo(p.monto)}</option>)}
+              </select>
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: '1rem' }}>
               <div style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.85rem 1rem', borderLeft: '3px solid #fac775' }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Pagos sin conciliar</div>
