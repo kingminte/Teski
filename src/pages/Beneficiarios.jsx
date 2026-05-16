@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
+import { useAuth } from '../lib/useAuth'
 import RutInput from '../components/RutInput'
 
 const EMPTY_FORM = {
@@ -28,6 +29,8 @@ export default function Beneficiarios() {
   const { socioId } = useParams()
   const navigate = useNavigate()
   const { showToast, ToastComponent } = useToast()
+  const { puedeEditar } = useAuth()
+  const editable = puedeEditar('beneficiarios')
   const [socios, setSocios] = useState([])
   const [allBeneficiarios, setAllBeneficiarios] = useState([])
   const [panelAbierto, setPanelAbierto] = useState(null)
@@ -300,9 +303,11 @@ export default function Beneficiarios() {
                                 <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>{s.numero_socio} · {s.rut}</div>
                               </div>
                             </div>
-                            <button className="btn btn-primary btn-sm" onClick={() => openNew(s)}>
-                              <i className="ti ti-plus"></i> Agregar beneficiario
-                            </button>
+                            {editable && (
+                              <button className="btn btn-primary btn-sm" onClick={() => openNew(s)}>
+                                <i className="ti ti-plus"></i> Agregar beneficiario
+                              </button>
+                            )}
                           </div>
 
                           {/* Lista de beneficiarios */}
@@ -343,12 +348,14 @@ export default function Beneficiarios() {
                                         (por socio inactivo)
                                       </span>
                                     )}
-                                    <button className="btn btn-sm" onClick={() => openEdit(b, s)}>
-                                      <i className="ti ti-edit"></i>
-                                    </button>
-                                    <button className="btn btn-sm btn-danger" onClick={() => handleDelete(b.id)}>
-                                      <i className="ti ti-trash"></i>
-                                    </button>
+                                    {editable && (<>
+                                      <button className="btn btn-sm" onClick={() => openEdit(b, s)}>
+                                        <i className="ti ti-edit"></i>
+                                      </button>
+                                      <button className="btn btn-sm btn-danger" onClick={() => handleDelete(b.id)}>
+                                        <i className="ti ti-trash"></i>
+                                      </button>
+                                    </>)}
                                   </div>
                                 </div>
                               )

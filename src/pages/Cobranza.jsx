@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
+import { useAuth } from '../lib/useAuth'
 import { formatearMontoConSimbolo, formatearMonto } from '../lib/montos'
 
 const AVATAR_COLORS = [
@@ -80,6 +81,8 @@ async function copiarPortapapeles(text) {
 
 export default function Cobranza() {
   const { showToast, ToastComponent } = useToast()
+  const { puedeEditar } = useAuth()
+  const editable = puedeEditar('cobranza')
 
   // Datos
   const [periodos, setPeriodos] = useState([])
@@ -354,7 +357,7 @@ export default function Cobranza() {
             {periodos.map(p => <option key={p.id} value={p.id}>{p.anio} — ${p.monto.toLocaleString('es-CL')}</option>)}
           </select>
         </div>
-        <button
+        {editable && <button
           className="btn btn-primary"
           onClick={handleEnviarMasivo}
           disabled={enviandoMasivo || sociosConEstado.filter(s => s.estado !== 'al_dia' && s.email).length === 0}
@@ -363,7 +366,7 @@ export default function Cobranza() {
           {enviandoMasivo
             ? <><i className="ti ti-loader"></i> Enviando…</>
             : <><i className="ti ti-send"></i> Enviar a todos los pendientes</>}
-        </button>
+        </button>}
       </div>
 
       {/* Resumen */}
@@ -570,15 +573,17 @@ export default function Cobranza() {
                         >
                           <i className="ti ti-copy"></i>
                         </button>
-                        <button
-                          className="btn btn-sm"
-                          title={s.email ? 'Enviar recordatorio' : 'Socio sin email'}
-                          disabled={!s.email || enviando}
-                          onClick={() => handleEnviarIndividual(s)}
-                          style={{ color: s.email ? '#5dcaa5' : 'var(--text-dim)', borderColor: s.email ? 'rgba(29,158,117,0.4)' : 'var(--border)' }}
-                        >
-                          <i className={`ti ${enviando ? 'ti-loader' : 'ti-send'}`}></i>
-                        </button>
+                        {editable && (
+                          <button
+                            className="btn btn-sm"
+                            title={s.email ? 'Enviar recordatorio' : 'Socio sin email'}
+                            disabled={!s.email || enviando}
+                            onClick={() => handleEnviarIndividual(s)}
+                            style={{ color: s.email ? '#5dcaa5' : 'var(--text-dim)', borderColor: s.email ? 'rgba(29,158,117,0.4)' : 'var(--border)' }}
+                          >
+                            <i className={`ti ${enviando ? 'ti-loader' : 'ti-send'}`}></i>
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
+import { useAuth } from '../lib/useAuth'
 import { useBancos } from '../lib/useBancos'
 import RutInput from '../components/RutInput'
 
@@ -26,6 +27,8 @@ const CONFIG_KEYS = {
 
 export default function Bancos() {
   const { showToast, ToastComponent } = useToast()
+  const { puedeEditar } = useAuth()
+  const editable = puedeEditar('configuracion')
   const { bancos: bancosActivos } = useBancos()
   const [tab, setTab] = useState('bancos')
 
@@ -312,9 +315,11 @@ export default function Bancos() {
                     {iniciando ? <><i className="ti ti-loader"></i> Cargando…</> : <><i className="ti ti-download"></i> Cargar lista base</>}
                   </button>
                 )}
-                <button className="btn btn-primary btn-sm" onClick={openNew}>
-                  <i className="ti ti-plus"></i> Nuevo banco
-                </button>
+                {editable && (
+                  <button className="btn btn-primary btn-sm" onClick={openNew}>
+                    <i className="ti ti-plus"></i> Nuevo banco
+                  </button>
+                )}
               </div>
             </div>
             {loading ? (
@@ -525,9 +530,11 @@ export default function Bancos() {
                     </button>
                   ))}
                 </div>
-                <button className="btn btn-primary btn-sm" onClick={openNewCuenta}>
-                  <i className="ti ti-plus"></i> Nueva cuenta
-                </button>
+                {editable && (
+                  <button className="btn btn-primary btn-sm" onClick={openNewCuenta}>
+                    <i className="ti ti-plus"></i> Nueva cuenta
+                  </button>
+                )}
               </div>
             </div>
             {cuentasLoading ? (
@@ -641,9 +648,9 @@ export default function Bancos() {
                   <i className="ti ti-search"></i>
                   <input placeholder="Buscar nombre / RUT / giro…" value={busquedaProveedor} onChange={e => setBusquedaProveedor(e.target.value)} />
                 </div>
-                <button className="btn btn-primary btn-sm" onClick={openNewProveedor}>
+                {editable && <button className="btn btn-primary btn-sm" onClick={openNewProveedor}>
                   <i className="ti ti-plus"></i> Nuevo proveedor
-                </button>
+                </button>}
               </div>
             </div>
             {proveedoresLoading ? (

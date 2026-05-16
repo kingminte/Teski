@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
+import { useAuth } from '../lib/useAuth'
 import RutInput from '../components/RutInput'
 import { useBancos } from '../lib/useBancos'
 
@@ -36,6 +37,8 @@ function estadoBadge(estado) {
 export default function Socios() {
   const navigate = useNavigate()
   const { showToast, ToastComponent } = useToast()
+  const { puedeEditar } = useAuth()
+  const editable = puedeEditar('socios')
   const fileRef = useRef()
   const [socios, setSocios] = useState([])
   const [loading, setLoading] = useState(true)
@@ -198,7 +201,7 @@ export default function Socios() {
               <i className="ti ti-search"></i>
               <input placeholder="Buscar por nombre, RUT o número…" value={search} onChange={e => setSearch(e.target.value)} />
             </div>
-            <button className="btn btn-primary" onClick={openNew}><i className="ti ti-plus"></i> Nuevo socio</button>
+            {editable && <button className="btn btn-primary" onClick={openNew}><i className="ti ti-plus"></i> Nuevo socio</button>}
           </div>
         </div>
         {loading ? (
@@ -207,7 +210,7 @@ export default function Socios() {
           <div className="empty-state"><i className="ti ti-users-off"></i>{search ? 'Sin resultados' : 'No hay socios registrados aún'}</div>
         ) : (
           <table>
-            <thead><tr><th>Socio</th><th>RUT</th><th>N° Socio</th><th>Beneficiarios</th><th>Estado</th><th>Acciones</th></tr></thead>
+            <thead><tr><th>Socio</th><th>RUT</th><th>N° Socio</th><th>Beneficiarios</th><th>Estado</th>{editable && <th>Acciones</th>}</tr></thead>
             <tbody>
               {filtered.map(s => {
                 const ac = getAvatarColor(s.nombre)
@@ -223,13 +226,15 @@ export default function Socios() {
                     <td><span className="chip">{s.numero_socio}</span></td>
                     <td style={{ color: 'var(--text-muted)' }}>{s.total_beneficiarios || 0} registrados</td>
                     <td>{estadoBadge(s.estado)}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: 4 }}>
-                        <button className="btn btn-sm" title="Beneficiarios" onClick={() => navigate(`/beneficiarios/${s.id}`)}><i className="ti ti-heart"></i></button>
-                        <button className="btn btn-sm" title="Editar" onClick={() => openEdit(s)}><i className="ti ti-edit"></i></button>
-                        <button className="btn btn-sm btn-danger" title="Eliminar" onClick={() => setConfirmDelete(s)}><i className="ti ti-trash"></i></button>
-                      </div>
-                    </td>
+                    {editable && (
+                      <td>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <button className="btn btn-sm" title="Beneficiarios" onClick={() => navigate(`/beneficiarios/${s.id}`)}><i className="ti ti-heart"></i></button>
+                          <button className="btn btn-sm" title="Editar" onClick={() => openEdit(s)}><i className="ti ti-edit"></i></button>
+                          <button className="btn btn-sm btn-danger" title="Eliminar" onClick={() => setConfirmDelete(s)}><i className="ti ti-trash"></i></button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 )
               })}

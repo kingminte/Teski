@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
+import { useAuth } from '../lib/useAuth'
 import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/montos'
 
 const EMPTY_CHEQUERA = { nombre: '', banco: 'Banco Estado', folio_inicial: '', folio_final: '' }
@@ -8,6 +9,8 @@ const EMPTY_DETALLE = { folio: '', fecha: new Date().toISOString().slice(0,10), 
 
 export default function Chequera() {
   const { showToast, ToastComponent } = useToast()
+  const { puedeEditar } = useAuth()
+  const editable = puedeEditar('chequera') || puedeEditar('cheques')
   const fileRef = useRef()
   const [chequeras, setChequeras] = useState([])
   const [cuentasPorPagar, setCuentasPorPagar] = useState([])
@@ -282,7 +285,7 @@ export default function Chequera() {
           <div className="card">
             <div className="card-header">
               <div className="card-title"><i className="ti ti-book"></i> Chequeras</div>
-              <button className="btn btn-primary btn-sm" onClick={() => setShowModalChequera(true)}><i className="ti ti-plus"></i></button>
+              {editable && <button className="btn btn-primary btn-sm" onClick={() => setShowModalChequera(true)}><i className="ti ti-plus"></i></button>}
             </div>
             {chequeras.length === 0 ? (
               <div className="empty-state" style={{ padding: '1.5rem' }}><i className="ti ti-book-off"></i>Sin chequeras</div>
@@ -321,9 +324,11 @@ export default function Chequera() {
                   {selected.estado === 'activa' && (
                     <button className="btn btn-sm" onClick={() => handleCambiarEstadoChequera(selected.id, 'agotada')}>Marcar agotada</button>
                   )}
-                  <button className="btn btn-primary btn-sm" onClick={abrirModalDetalle}>
-                    <i className="ti ti-plus"></i> Registrar uso
-                  </button>
+                  {editable && (
+                    <button className="btn btn-primary btn-sm" onClick={abrirModalDetalle}>
+                      <i className="ti ti-plus"></i> Registrar uso
+                    </button>
+                  )}
                 </div>
               </div>
 

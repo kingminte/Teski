@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
+import { useAuth } from '../lib/useAuth'
 import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/montos'
 import * as XLSX from 'xlsx'
 import { parsearCartolaSantander, extraerCabeceraCartola, extraerResumenCartola, parsearUltimosMovimientos, extraerCabeceraUltimosMovimientos, detectarTipoArchivo, extraerMesAnioDeNombre } from '../lib/parsearCartola'
@@ -22,6 +23,8 @@ const formatearPeriodoCartola = (cartola) => {
 
 export default function Cartola() {
   const { showToast, ToastComponent } = useToast()
+  const { puedeEditar } = useAuth()
+  const editable = puedeEditar('cartola')
   const fileRef = useRef()
   const [cartolas, setCartolas] = useState([])
   const [movimientos, setMovimientos] = useState([])
@@ -478,7 +481,7 @@ export default function Cartola() {
             </div>
           )}
         </div>
-        <div style={{ padding: '1.5rem' }}>
+        {editable && <div style={{ padding: '1.5rem' }}>
           <div
             className={`upload-zone${dragOver ? ' drag-over' : ''}`}
             onClick={() => fileRef.current?.click()}
@@ -506,7 +509,7 @@ export default function Cartola() {
           </div>
           <input ref={fileRef} type="file" accept=".xls,.xlsx,.csv" style={{ display: 'none' }}
             onChange={e => handleFile(e.target.files[0])} />
-        </div>
+        </div>}
       </div>
 
       {/* Selector cartola */}
@@ -525,9 +528,11 @@ export default function Cartola() {
               {formatearPeriodoCartola(selectedCartola)}
             </span>
           )}
-          <button className="btn btn-sm btn-danger" onClick={handleEliminarCartola} title="Eliminar cartola y sus movimientos">
-            <i className="ti ti-trash"></i> Eliminar
-          </button>
+          {editable && (
+            <button className="btn btn-sm btn-danger" onClick={handleEliminarCartola} title="Eliminar cartola y sus movimientos">
+              <i className="ti ti-trash"></i> Eliminar
+            </button>
+          )}
         </div>
       )}
 

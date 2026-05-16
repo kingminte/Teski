@@ -72,7 +72,7 @@ const PAGE_TITLES = {
 export default function Layout({ children }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
-  const { user, permisos, tieneAcceso, logout, primeraRutaPermitida } = useAuth()
+  const { user, permisos, tieneAcceso, puedeEditar, logout, primeraRutaPermitida } = useAuth()
 
   // Si el usuario está en una ruta sin permiso, redirigir a su primera ruta permitida.
   // Esperar a que `permisos` esté cargado (objeto no vacío) para usuarios no-admin.
@@ -159,9 +159,11 @@ export default function Layout({ children }) {
       <div style={{ marginLeft:220, flex:1, display:'flex', flexDirection:'column' }}>
         <div style={{ background:'#0d1e38', borderBottom:'0.5px solid var(--border)', padding:'0 2rem', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:5 }}>
           <div style={{ fontSize:16, color:'var(--gold-light)', letterSpacing:0.5 }}>{title}</div>
-          <button className="btn btn-primary btn-sm" onClick={() => navigate('/socios')}>
-            <i className="ti ti-user-plus"></i> Nuevo socio
-          </button>
+          {puedeEditar('socios') && (
+            <button className="btn btn-primary btn-sm" onClick={() => navigate('/socios')}>
+              <i className="ti ti-user-plus"></i> Nuevo socio
+            </button>
+          )}
         </div>
         <div style={{ padding:'2rem', flex:1 }}>
           {children}

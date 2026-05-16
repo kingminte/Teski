@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
+import { useAuth } from '../lib/useAuth'
 import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/montos'
 
 const MEDIOS_PAGO = [
@@ -41,6 +42,8 @@ const mesActual = () => new Date().toISOString().slice(0, 7)
 
 export default function CuentasPorPagar() {
   const { showToast, ToastComponent } = useToast()
+  const { puedeEditar } = useAuth()
+  const editable = puedeEditar('cuentas_por_pagar')
   const fileRef = useRef()
 
   const [cuentas, setCuentas] = useState([])
@@ -482,9 +485,11 @@ export default function CuentasPorPagar() {
               onClick={handleExportar} disabled={exportando}>
               {exportando ? <><i className="ti ti-loader"></i> Exportando…</> : <><i className="ti ti-file-spreadsheet"></i> Excel</>}
             </button>
-            <button className="btn btn-primary btn-sm" onClick={abrirNueva}>
-              <i className="ti ti-plus"></i> Nueva cuenta
-            </button>
+            {editable && (
+              <button className="btn btn-primary btn-sm" onClick={abrirNueva}>
+                <i className="ti ti-plus"></i> Nueva cuenta
+              </button>
+            )}
           </div>
         </div>
 
@@ -573,7 +578,7 @@ export default function CuentasPorPagar() {
                                 <div style={{ width: `${progreso}%`, height: '100%', borderRadius: 3, background: c.estado === 'pagada' ? '#5dcaa5' : c.estado === 'parcial' ? '#fac775' : '#f09595', transition: 'width 0.3s' }}></div>
                               </div>
                               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                {c.estado !== 'pagada' && c.estado !== 'anulada' && (
+                                {editable && c.estado !== 'pagada' && c.estado !== 'anulada' && (
                                   <>
                                     <button className="btn btn-sm btn-primary" onClick={() => abrirPago(c)}>
                                       <i className="ti ti-cash"></i> Registrar pago
@@ -583,7 +588,7 @@ export default function CuentasPorPagar() {
                                     </button>
                                   </>
                                 )}
-                                {c.estado !== 'anulada' && (
+                                {editable && c.estado !== 'anulada' && (
                                   <button className="btn btn-sm btn-danger" onClick={() => handleAnular(c)}>
                                     <i className="ti ti-ban"></i> Anular
                                   </button>

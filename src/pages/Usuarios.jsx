@@ -70,7 +70,8 @@ const rolMeta = (rol) => ROLES.find(r => r.value === rol) || ROLES[4]
 
 export default function Usuarios() {
   const { showToast, ToastComponent } = useToast()
-  const { esAdmin } = useAuth()
+  const { esAdmin, puedeEditar } = useAuth()
+  const editable = puedeEditar('usuarios')
   const [tab, setTab] = useState('usuarios')
   const [usuarios, setUsuarios] = useState([])
   const [socios, setSocios] = useState([])
@@ -329,9 +330,11 @@ export default function Usuarios() {
                   <i className="ti ti-search"></i>
                   <input placeholder="Buscar…" value={busqueda} onChange={e => setBusqueda(e.target.value)} />
                 </div>
-                <button className="btn btn-primary btn-sm" onClick={abrirNuevo}>
-                  <i className="ti ti-plus"></i> Nuevo usuario
-                </button>
+                {editable && (
+                  <button className="btn btn-primary btn-sm" onClick={abrirNuevo}>
+                    <i className="ti ti-plus"></i> Nuevo usuario
+                  </button>
+                )}
               </div>
             </div>
             {loading ? (
@@ -374,12 +377,12 @@ export default function Usuarios() {
                         </td>
                         <td>
                           <div style={{ display: 'flex', gap: 4 }}>
-                            <button className="btn btn-sm" onClick={() => abrirEditar(u)} title="Editar"><i className="ti ti-edit"></i></button>
-                            <button className="btn btn-sm" onClick={() => handleResetearClave(u)} title="Resetear clave"><i className="ti ti-key"></i></button>
-                            <button className="btn btn-sm" onClick={() => handleToggleActivo(u)} title={u.activo ? 'Desactivar' : 'Activar'}>
+                            {editable && <button className="btn btn-sm" onClick={() => abrirEditar(u)} title="Editar"><i className="ti ti-edit"></i></button>}
+                            {editable && <button className="btn btn-sm" onClick={() => handleResetearClave(u)} title="Resetear clave"><i className="ti ti-key"></i></button>}
+                            {editable && <button className="btn btn-sm" onClick={() => handleToggleActivo(u)} title={u.activo ? 'Desactivar' : 'Activar'}>
                               <i className={`ti ${u.activo ? 'ti-user-off' : 'ti-user-check'}`}></i>
-                            </button>
-                            {u.rol !== 'admin' && (
+                            </button>}
+                            {editable && u.rol !== 'admin' && (
                               <button className="btn btn-sm btn-danger" onClick={() => handleDeleteUsuario(u)} title="Eliminar usuario">
                                 <i className="ti ti-trash"></i>
                               </button>

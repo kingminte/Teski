@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
+import { useAuth } from '../lib/useAuth'
 import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/montos'
 import { useBancos } from '../lib/useBancos'
 
@@ -18,6 +19,8 @@ const EMPTY_FORM = {
 
 export default function Cheques() {
   const { showToast, ToastComponent } = useToast()
+  const { puedeEditar } = useAuth()
+  const editable = puedeEditar('cheques')
   const [cheques, setCheques] = useState([])
   const [socios, setSocios] = useState([])
   const [movimientos, setMovimientos] = useState([])
@@ -189,9 +192,11 @@ export default function Cheques() {
               onClick={handleExportar} disabled={exportando}>
               {exportando ? <><i className="ti ti-loader"></i> Exportando…</> : <><i className="ti ti-file-spreadsheet"></i> Excel</>}
             </button>
-            <button className="btn btn-primary btn-sm" onClick={openNew}>
-              <i className="ti ti-plus"></i> Registrar cheque
-            </button>
+            {editable && (
+              <button className="btn btn-primary btn-sm" onClick={openNew}>
+                <i className="ti ti-plus"></i> Registrar cheque
+              </button>
+            )}
           </div>
         </div>
 

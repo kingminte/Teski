@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
+import { useAuth } from '../lib/useAuth'
 import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/montos'
 
 const FORMAS_PAGO = [
@@ -12,6 +13,8 @@ const FORMAS_PAGO = [
 
 export default function Cuotas() {
   const { showToast, ToastComponent } = useToast()
+  const { puedeEditar } = useAuth()
+  const editable = puedeEditar('cuotas')
   const [periodos, setPeriodos] = useState([])
   const [selectedPeriodo, setSelectedPeriodo] = useState(null)
   const [socios, setSocios] = useState([])
@@ -202,9 +205,9 @@ export default function Cuotas() {
             {periodos.map(p => <option key={p.id} value={p.id}>{p.anio} — ${p.monto.toLocaleString('es-CL')}</option>)}
           </select>
         </div>
-        <button className="btn btn-primary" onClick={() => setShowModalPeriodo(true)}>
+        {editable && <button className="btn btn-primary" onClick={() => setShowModalPeriodo(true)}>
           <i className="ti ti-plus"></i> Nuevo período anual
-        </button>
+        </button>}
         {selectedPeriodo && (
           <button className="btn" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)', marginLeft: 'auto' }}
             onClick={handleExportar} disabled={exportando}>
@@ -248,7 +251,7 @@ export default function Cuotas() {
             ) : (
               <table>
                 <thead>
-                  <tr><th>Socio</th><th>Pagado</th><th>Pendiente</th><th>Estado</th><th>Última fecha</th><th>Acciones</th></tr>
+                  <tr><th>Socio</th><th>Pagado</th><th>Pendiente</th><th>Estado</th><th>Última fecha</th>{editable && <th>Acciones</th>}</tr>
                 </thead>
                 <tbody>
                   {sociosFiltrados.map(s => {
@@ -295,6 +298,7 @@ export default function Cuotas() {
                         <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>
                           {ultimoPago ? new Date(ultimoPago.fecha_pago).toLocaleDateString('es-CL') : '—'}
                         </td>
+                        {editable && (
                         <td>
                           <div style={{ display: 'flex', gap: 4 }}>
                             <button className="btn btn-sm btn-primary" onClick={() => openRegistrarPago(s)}>
@@ -310,6 +314,7 @@ export default function Cuotas() {
                             )}
                           </div>
                         </td>
+                        )}
                       </tr>
 
                       {/* Panel detalle pagos */}
