@@ -160,18 +160,21 @@ export default function Usuarios() {
 
   const handleGuardar = async () => {
     if (!form.nombre.trim()) { showToast('El nombre es obligatorio', 'error'); return }
-    if (!editId && !form.username.trim()) { showToast('El username es obligatorio', 'error'); return }
+    if (!form.username.trim()) { showToast('El username es obligatorio', 'error'); return }
     if (!editId && (!form.password || form.password.length < 6)) { showToast('La contraseña debe tener al menos 6 caracteres', 'error'); return }
+    if (editId && form.password && form.password.length < 6) { showToast('La nueva contraseña debe tener al menos 6 caracteres', 'error'); return }
 
     setSaving(true)
     let error
     if (editId) {
       const payload = {
         nombre: form.nombre.trim(),
+        username: form.username.trim().toLowerCase(),
         email: form.email || null,
         rol: form.rol,
         socio_id: form.rol === 'socio' ? (form.socio_id || null) : null,
       }
+      if (form.password) payload.password_hash = await hashPassword(form.password)
       ;({ error } = await supabase.from('usuarios').update(payload).eq('id', editId))
     } else {
       const passwordHash = await hashPassword(form.password)
@@ -435,25 +438,26 @@ export default function Usuarios() {
                   <div className="form-group full"><label>Nombre completo *</label>
                     <input placeholder="Ej: Juan Pérez" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))} />
                   </div>
-                  {!editId && (
-                    <div className="form-group"><label>Username *</label>
-                      <input placeholder="ej: jperez" value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} />
+                  <div className="form-group"><label>Username *</label>
+                    <input placeholder="ej: jperez" value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} />
+                    {!editId && (
                       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, fontFamily: 'sans-serif' }}>
                         Primera letra del nombre + primer apellido
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                   <div className="form-group"><label>Email</label>
                     <input type="email" placeholder="Email del usuario" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
                   </div>
-                  {!editId && (
-                    <div className="form-group full"><label>Contraseña * (mínimo 6 caracteres)</label>
-                      <input type="text" placeholder="••••••••" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+                  <div className="form-group full">
+                    <label>{editId ? 'Nueva contraseña (dejar vacío para no cambiar)' : 'Contraseña * (mínimo 6 caracteres)'}</label>
+                    <input type="text" placeholder={editId ? 'Dejar vacío para mantener actual' : '••••••••'} value={form.password || ''} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} />
+                    {!editId && (
                       <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, fontFamily: 'sans-serif' }}>
                         username + 2026
                       </div>
-                    </div>
-                  )}
+                    )}
+                  </div>
                   <div className="form-group"><label>Rol *</label>
                     <select value={form.rol} onChange={e => setForm(f => ({ ...f, rol: e.target.value, socio_id: e.target.value === 'socio' ? f.socio_id : '' }))}>
                       {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
