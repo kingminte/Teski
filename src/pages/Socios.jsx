@@ -37,8 +37,10 @@ function estadoBadge(estado) {
 export default function Socios() {
   const navigate = useNavigate()
   const { showToast, ToastComponent } = useToast()
-  const { puedeEditar } = useAuth()
+  const { user, puedeEditar } = useAuth()
   const editable = puedeEditar('socios')
+  const esSocio = user?.rol === 'socio'
+  const miSocioId = user?.socio_id
   const fileRef = useRef()
   const [socios, setSocios] = useState([])
   const [loading, setLoading] = useState(true)
@@ -55,8 +57,9 @@ export default function Socios() {
 
   const load = async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from('vista_socios').select('*').order('numero_socio', { ascending: true })
+    let query = supabase.from('vista_socios').select('*').order('numero_socio', { ascending: true })
+    if (esSocio && miSocioId) query = query.eq('id', miSocioId)
+    const { data, error } = await query
     if (!error) setSocios(data || [])
     setLoading(false)
   }
@@ -193,14 +196,22 @@ export default function Socios() {
   return (
     <div>
       {ToastComponent}
+      {esSocio && !miSocioId && (
+        <div className="empty-state">
+          <i className="ti ti-alert-circle"></i>
+          Tu cuenta no está vinculada a un socio. Contacta al administrador.
+        </div>
+      )}
       <div className="card">
         <div className="card-header">
-          <div className="card-title"><i className="ti ti-users"></i> Registro de socios ({socios.length})</div>
+          <div className="card-title"><i className="ti ti-users"></i> {esSocio ? 'Mi información' : `Registro de socios (${socios.length})`}</div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <div className="search-box">
-              <i className="ti ti-search"></i>
-              <input placeholder="Buscar por nombre, RUT o número…" value={search} onChange={e => setSearch(e.target.value)} />
-            </div>
+            {!esSocio && (
+              <div className="search-box">
+                <i className="ti ti-search"></i>
+                <input placeholder="Buscar por nombre, RUT o número…" value={search} onChange={e => setSearch(e.target.value)} />
+              </div>
+            )}
             {editable && <button className="btn btn-primary" onClick={openNew}><i className="ti ti-plus"></i> Nuevo socio</button>}
           </div>
         </div>
