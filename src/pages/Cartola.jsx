@@ -617,20 +617,22 @@ export default function Cartola() {
                                 <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>{socioCalce.numero_socio} · {socioCalce.rut}</div>
                               </div>
                             </div>
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              {esAlias && (
-                                <button className="btn btn-sm" style={{ fontSize: 11 }} title="Reasignar este RUT a otro socio"
-                                  onClick={() => setCambiandoAlias(prev => ({ ...prev, [mov.id]: true }))}>
-                                  <i className="ti ti-refresh"></i> Cambiar
+                            {editable && (
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                {esAlias && (
+                                  <button className="btn btn-sm" style={{ fontSize: 11 }} title="Reasignar este RUT a otro socio"
+                                    onClick={() => setCambiandoAlias(prev => ({ ...prev, [mov.id]: true }))}>
+                                    <i className="ti ti-refresh"></i> Cambiar
+                                  </button>
+                                )}
+                                <button className="btn btn-sm" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)' }} onClick={() => toggleForm(mov.id)}>
+                                  <i className={`ti ${c.abierto ? 'ti-chevron-up' : 'ti-adjustments'}`}></i>
+                                  {c.abierto ? 'Cerrar' : 'Conciliar'}
                                 </button>
-                              )}
-                              <button className="btn btn-sm" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)' }} onClick={() => toggleForm(mov.id)}>
-                                <i className={`ti ${c.abierto ? 'ti-chevron-up' : 'ti-adjustments'}`}></i>
-                                {c.abierto ? 'Cerrar' : 'Conciliar'}
-                              </button>
-                            </div>
+                              </div>
+                            )}
                           </div>
-                        ) : (
+                        ) : editable ? (
                           <div style={{ background: 'rgba(201,168,76,0.06)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.6rem 0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
                             <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif', display: 'flex', alignItems: 'center', gap: 6 }}>
                               <i className="ti ti-alert-circle" style={{ fontSize: 14 }}></i>
@@ -658,10 +660,10 @@ export default function Cartola() {
                               </button>
                             </div>
                           </div>
-                        )}
+                        ) : null}
 
                         {/* Formulario de distribución multi-concepto */}
-                        {c.abierto && (() => {
+                        {editable && c.abierto && (() => {
                           const montoTotal = Math.abs(mov.monto)
                           const { distribuido, restante, completo, excede } = calcularDistribucion(c.lineas, montoTotal)
                           return (
@@ -772,10 +774,12 @@ export default function Cartola() {
                                 <strong>{mov.socios ? `${mov.socios.nombre} ${mov.socios.apellido} (${mov.socios.numero_socio})` : 'Socio'}</strong>
                               )}
                             </div>
-                            <button className="btn btn-sm" style={{ color: '#f09595', borderColor: 'rgba(240,149,149,0.4)', fontSize: 11, flexShrink: 0 }}
-                              onClick={() => handleDesconciliar(mov)}>
-                              <i className="ti ti-arrow-back-up"></i> Desconciliar
-                            </button>
+                            {editable && (
+                              <button className="btn btn-sm" style={{ color: '#f09595', borderColor: 'rgba(240,149,149,0.4)', fontSize: 11, flexShrink: 0 }}
+                                onClick={() => handleDesconciliar(mov)}>
+                                <i className="ti ti-arrow-back-up"></i> Desconciliar
+                              </button>
+                            )}
                           </div>
                           {tieneMultiples && (
                             <div style={{ display: 'flex', gap: 6, marginLeft: 24, flexWrap: 'wrap' }}>
@@ -839,7 +843,7 @@ export default function Cartola() {
                       </div>
                     </div>
 
-                    {mov.estado !== 'conciliado' && (
+                    {editable && mov.estado !== 'conciliado' && (
                       sugerido ? (
                         <div style={{ background: 'rgba(29,158,117,0.1)', border: '0.5px solid rgba(29,158,117,0.3)', borderRadius: 8, padding: '0.6rem 0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -894,10 +898,12 @@ export default function Cartola() {
                           Vinculado a Cheque N°{chequeVinculado.folio} — {formatearMontoConSimbolo(chequeVinculado.monto)}
                           {chequeVinculado.beneficiario && ` · ${chequeVinculado.beneficiario}`}
                         </div>
-                        <button className="btn btn-sm" style={{ color: '#f09595', borderColor: 'rgba(240,149,149,0.4)', fontSize: 11 }}
-                          onClick={() => handleDesvincularCargo(mov)}>
-                          <i className="ti ti-arrow-back-up"></i> Desvincular
-                        </button>
+                        {editable && (
+                          <button className="btn btn-sm" style={{ color: '#f09595', borderColor: 'rgba(240,149,149,0.4)', fontSize: 11 }}
+                            onClick={() => handleDesvincularCargo(mov)}>
+                            <i className="ti ti-arrow-back-up"></i> Desvincular
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

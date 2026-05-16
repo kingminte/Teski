@@ -408,20 +408,22 @@ export default function Cuotas() {
                                             {p.comentario || '—'}
                                           </td>
                                           <td style={{ padding: '6px 10px' }}>
-                                            <div style={{ display: 'flex', gap: 4 }}>
-                                              <button className="btn btn-sm" title="Editar" onClick={() => setEditPago({
-                                                id: p.id,
-                                                monto: formatearMonto(p.monto),
-                                                fecha_pago: p.fecha_pago,
-                                                forma_pago: p.forma_pago,
-                                                comentario: p.comentario || '',
-                                              })}>
-                                                <i className="ti ti-edit"></i>
-                                              </button>
-                                              <button className="btn btn-sm btn-danger" title="Eliminar" onClick={() => handleEliminarPago(p.id)}>
-                                                <i className="ti ti-trash"></i>
-                                              </button>
-                                            </div>
+                                            {editable && (
+                                              <div style={{ display: 'flex', gap: 4 }}>
+                                                <button className="btn btn-sm" title="Editar" onClick={() => setEditPago({
+                                                  id: p.id,
+                                                  monto: formatearMonto(p.monto),
+                                                  fecha_pago: p.fecha_pago,
+                                                  forma_pago: p.forma_pago,
+                                                  comentario: p.comentario || '',
+                                                })}>
+                                                  <i className="ti ti-edit"></i>
+                                                </button>
+                                                <button className="btn btn-sm btn-danger" title="Eliminar" onClick={() => handleEliminarPago(p.id)}>
+                                                  <i className="ti ti-trash"></i>
+                                                </button>
+                                              </div>
+                                            )}
                                           </td>
                                         </>
                                       )}
@@ -465,7 +467,7 @@ export default function Cuotas() {
                       </td>
                       <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.comentario || '—'}</td>
                       <td>
-                        <button className="btn btn-sm btn-danger" onClick={() => handleEliminarPago(p.id)}><i className="ti ti-trash"></i></button>
+                        {editable && <button className="btn btn-sm btn-danger" onClick={() => handleEliminarPago(p.id)}><i className="ti ti-trash"></i></button>}
                       </td>
                     </tr>
                   ))}
