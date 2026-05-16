@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/useAuth'
 import logo from '../assets/logo.png'
 
 export default function Login() {
-  const [email, setEmail] = useState('')
+  const { login } = useAuth()
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -12,9 +13,13 @@ export default function Login() {
     e.preventDefault()
     setLoading(true)
     setError('')
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) setError('Credenciales incorrectas. Verifica tu correo y contraseña.')
-    setLoading(false)
+    try {
+      await login(username, password)
+      window.location.href = '/dashboard'
+    } catch (err) {
+      setError(err.message || 'Error al iniciar sesión')
+      setLoading(false)
+    }
   }
 
   return (
@@ -32,8 +37,8 @@ export default function Login() {
           <div className="form-group">
             <label>Usuario</label>
             <input
-              type="text" required
-              value={email} onChange={e => setEmail(e.target.value)}
+              type="text" required autoFocus
+              value={username} onChange={e => setUsername(e.target.value)}
               placeholder="Usuario"
             />
           </div>
@@ -54,10 +59,6 @@ export default function Login() {
             {loading ? <><i className="ti ti-loader"></i> Ingresando...</> : <><i className="ti ti-login"></i> Iniciar sesión</>}
           </button>
         </form>
-
-        <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'rgba(201,168,76,0.06)', borderRadius: 8, fontSize: 12, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
-          <strong style={{ color: 'var(--gold-dim)' }}>Primera vez:</strong> Crea tu usuario en Supabase → Authentication → Users → Invite User
-        </div>
       </div>
     </div>
   )

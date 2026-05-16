@@ -3,61 +3,84 @@ import { supabase } from './supabase'
 
 const AuthContext = createContext(null)
 
-const USER_FALLBACK = { nombre: 'Sin perfil', username: '—', rol: 'admin', virtual: true }
+export async function hashPassword(pass) {
+  const enc = new TextEncoder().encode(pass)
+  const hash = await crypto.subtle.digest('SHA-256', enc)
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
 
-export function AuthProvider({ children, session }) {
-  const [user, setUser] = useState(null)
+export function loadUserFromStorage() {
+  try {
+    const raw = localStorage.getItem('teski_user')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+
+export function AuthProvider({ children, user: userProp, onUserChange }) {
   const [permisos, setPermisos] = useState({})
-  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!session?.user?.email) { setUser(null); setPermisos({}); setLoading(false); return }
+    if (!userProp?.rol) { setPermisos({}); return }
     let cancelled = false
     ;(async () => {
-      setLoading(true)
-      const { data: u } = await supabase
-        .from('usuarios')
-        .select('*')
-        .eq('email', session.user.email)
-        .eq('activo', true)
-        .maybeSingle()
-
-      const efectivo = u || USER_FALLBACK
-      if (cancelled) return
-      setUser(efectivo)
-
-      const { data: perms } = await supabase.from('permisos_rol').select('seccion,nivel').eq('rol', efectivo.rol)
+      const { data } = await supabase.from('permisos_rol').select('seccion,nivel').eq('rol', userProp.rol)
       if (cancelled) return
       const map = {}
-      ;(perms || []).forEach(p => { map[p.seccion] = p.nivel })
+      ;(data || []).forEach(p => { map[p.seccion] = p.nivel })
       setPermisos(map)
-      setLoading(false)
-
-      if (u) await supabase.from('usuarios').update({ ultimo_acceso: new Date().toISOString() }).eq('id', u.id)
     })()
     return () => { cancelled = true }
-  }, [session?.user?.email])
+  }, [userProp?.rol])
+
+  const login = async (username, password) => {
+    const passHash = await hashPassword(password)
+    const { data, error } = await supabase
+      .from('usuarios')
+      .select('*')
+      .eq('username', username.trim().toLowerCase())
+      .eq('password_hash', passHash)
+      .eq('activo', true)
+      .maybeSingle()
+    if (error) throw new Error('Error al conectar con el servidor')
+    if (!data) throw new Error('Usuario o contraseña incorrectos')
+    await supabase.from('usuarios').update({ ultimo_acceso: new Date().toISOString() }).eq('id', data.id)
+    localStorage.setItem('teski_user', JSON.stringify(data))
+    onUserChange?.(data)
+    return data
+  }
+
+  const logout = () => {
+    localStorage.removeItem('teski_user')
+    onUserChange?.(null)
+  }
 
   const tieneAcceso = (seccion) => {
-    if (!user) return false
-    if (user.rol === 'admin') return true
+    if (!userProp) return false
+    if (userProp.rol === 'admin') return true
     const n = permisos[seccion]
     return n === 'completo' || n === 'lectura'
   }
 
   const puedeEditar = (seccion) => {
-    if (!user) return false
-    if (user.rol === 'admin') return true
+    if (!userProp) return false
+    if (userProp.rol === 'admin') return true
     return permisos[seccion] === 'completo'
   }
 
-  const esAdmin = () => user?.rol === 'admin'
+  const esAdmin = () => userProp?.rol === 'admin'
 
   return (
-    <AuthContext.Provider value={{ user, permisos, loading, tieneAcceso, puedeEditar, esAdmin }}>
+    <AuthContext.Provider value={{ user: userProp, permisos, login, logout, tieneAcceso, puedeEditar, esAdmin }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
-export const useAuth = () => useContext(AuthContext) || { user: null, permisos: {}, loading: true, tieneAcceso: () => false, puedeEditar: () => false, esAdmin: () => false }
+export const useAuth = () => useContext(AuthContext) || {
+  user: null, permisos: {},
+  login: async () => { throw new Error('AuthProvider no montado') },
+  logout: () => {},
+  tieneAcceso: () => false, puedeEditar: () => false, esAdmin: () => false,
+}

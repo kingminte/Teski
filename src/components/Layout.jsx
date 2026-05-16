@@ -1,5 +1,4 @@
 import { useNavigate, useLocation } from 'react-router-dom'
-import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/useAuth'
 import logo from '../assets/logo.png'
 
@@ -70,12 +69,12 @@ const PAGE_TITLES = {
   '/usuarios': 'Usuarios',
 }
 
-export default function Layout({ children, session }) {
+export default function Layout({ children }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
-  const { user, tieneAcceso } = useAuth()
+  const { user, tieneAcceso, logout } = useAuth()
 
-  const handleLogout = async () => { await supabase.auth.signOut() }
+  const handleLogout = () => { logout(); window.location.href = '/' }
 
   const title = Object.entries(PAGE_TITLES).find(([k]) => pathname.startsWith(k))?.[1] || 'Teski Club'
 
@@ -141,7 +140,7 @@ export default function Layout({ children, session }) {
               </div>
             </div>
           )}
-          <div style={{ fontSize: 11, color:'var(--text-dim)', fontFamily:'sans-serif', marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{session.user.email}</div>
+          <div style={{ fontSize: 11, color:'var(--text-dim)', fontFamily:'sans-serif', marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || user?.username || ''}</div>
           <button className="btn btn-sm btn-danger" onClick={handleLogout} style={{ width:'100%', justifyContent:'center' }}>
             <i className="ti ti-logout"></i> Cerrar sesión
           </button>

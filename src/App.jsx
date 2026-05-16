@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { supabase } from './lib/supabase'
-import { AuthProvider } from './lib/useAuth'
+import { AuthProvider, loadUserFromStorage } from './lib/useAuth'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -20,52 +19,47 @@ import Usuarios from './pages/Usuarios'
 import SociosActivos from './pages/SociosActivos'
 
 export default function App() {
-  const [session, setSession] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState(loadUserFromStorage)
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setLoading(false)
-    })
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-    })
-    return () => subscription.unsubscribe()
+    const onStorage = (e) => {
+      if (e.key === 'teski_user') setUser(loadUserFromStorage())
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
   }, [])
 
-  if (loading) return (
-    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', color:'var(--gold)', fontFamily:'sans-serif' }}>
-      <i className="ti ti-loader" style={{ fontSize:32, marginRight:12 }}></i>
-      Cargando...
-    </div>
-  )
-
-  if (!session) return <Login />
+  if (!user) {
+    return (
+      <AuthProvider user={null} onUserChange={setUser}>
+        <Login />
+      </AuthProvider>
+    )
+  }
 
   return (
-    <AuthProvider session={session}>
-    <Layout session={session}>
-      <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/socios" element={<Socios />} />
-        <Route path="/beneficiarios" element={<Beneficiarios />} />
-        <Route path="/beneficiarios/:socioId" element={<Beneficiarios />} />
-        <Route path="/socios-activos" element={<SociosActivos />} />
-        <Route path="/cuentas-por-pagar" element={<CuentasPorPagar />} />
-        <Route path="/cartola" element={<Cartola />} />
-        <Route path="/cuotas" element={<Cuotas />} />
-        <Route path="/cobranza" element={<Cobranza />} />
-        <Route path="/cheques" element={<Cheques />} />
-        <Route path="/chequera" element={<Chequera />} />
-        <Route path="/incorporaciones" element={<Incorporaciones />} />
-        <Route path="/bancos" element={<Bancos />} />
-        <Route path="/reporteria" element={<Reporteria />} />
-        <Route path="/usuarios" element={<Usuarios />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
-    </Layout>
+    <AuthProvider user={user} onUserChange={setUser}>
+      <Layout>
+        <Routes>
+          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/socios" element={<Socios />} />
+          <Route path="/beneficiarios" element={<Beneficiarios />} />
+          <Route path="/beneficiarios/:socioId" element={<Beneficiarios />} />
+          <Route path="/socios-activos" element={<SociosActivos />} />
+          <Route path="/cuentas-por-pagar" element={<CuentasPorPagar />} />
+          <Route path="/cartola" element={<Cartola />} />
+          <Route path="/cuotas" element={<Cuotas />} />
+          <Route path="/cobranza" element={<Cobranza />} />
+          <Route path="/cheques" element={<Cheques />} />
+          <Route path="/chequera" element={<Chequera />} />
+          <Route path="/incorporaciones" element={<Incorporaciones />} />
+          <Route path="/bancos" element={<Bancos />} />
+          <Route path="/reporteria" element={<Reporteria />} />
+          <Route path="/usuarios" element={<Usuarios />} />
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
+        </Routes>
+      </Layout>
     </AuthProvider>
   )
 }
