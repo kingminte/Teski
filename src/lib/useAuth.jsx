@@ -3,6 +3,32 @@ import { supabase } from './supabase'
 
 const AuthContext = createContext(null)
 
+// Orden de prioridad para decidir landing tras login
+const SECCION_A_RUTA = [
+  ['dashboard', '/dashboard'],
+  ['socios', '/socios'],
+  ['beneficiarios', '/beneficiarios'],
+  ['cuotas', '/cuotas'],
+  ['socios_activos', '/socios-activos'],
+  ['cartola', '/cartola'],
+  ['cheques', '/cheques'],
+  ['chequera', '/chequera'],
+  ['cuentas_por_pagar', '/cuentas-por-pagar'],
+  ['cobranza', '/cobranza'],
+  ['configuracion', '/bancos'],
+  ['reporteria', '/reporteria'],
+  ['usuarios', '/usuarios'],
+]
+
+function calcularRutaInicial(rol, permisosMap) {
+  if (rol === 'admin') return '/dashboard'
+  for (const [seccion, ruta] of SECCION_A_RUTA) {
+    const n = permisosMap[seccion]
+    if (n === 'completo' || n === 'lectura') return ruta
+  }
+  return '/dashboard'
+}
+
 export async function hashPassword(pass) {
   const enc = new TextEncoder().encode(pass)
   const hash = await crypto.subtle.digest('SHA-256', enc)
@@ -48,7 +74,13 @@ export function AuthProvider({ children, user: userProp, onUserChange }) {
     await supabase.from('usuarios').update({ ultimo_acceso: new Date().toISOString() }).eq('id', data.id)
     localStorage.setItem('teski_user', JSON.stringify(data))
     onUserChange?.(data)
-    return { debe_cambiar_clave: !!data.debe_cambiar_clave, user: data }
+
+    const { data: perms } = await supabase.from('permisos_rol').select('seccion,nivel').eq('rol', data.rol)
+    const permisosMap = {}
+    ;(perms || []).forEach(p => { permisosMap[p.seccion] = p.nivel })
+    const rutaInicial = calcularRutaInicial(data.rol, permisosMap)
+
+    return { debe_cambiar_clave: !!data.debe_cambiar_clave, user: data, rutaInicial }
   }
 
   const logout = () => {
@@ -71,8 +103,13 @@ export function AuthProvider({ children, user: userProp, onUserChange }) {
 
   const esAdmin = () => userProp?.rol === 'admin'
 
+  const primeraRutaPermitida = () => {
+    if (!userProp) return '/login'
+    return calcularRutaInicial(userProp.rol, permisos)
+  }
+
   return (
-    <AuthContext.Provider value={{ user: userProp, permisos, login, logout, tieneAcceso, puedeEditar, esAdmin }}>
+    <AuthContext.Provider value={{ user: userProp, permisos, login, logout, tieneAcceso, puedeEditar, esAdmin, primeraRutaPermitida }}>
       {children}
     </AuthContext.Provider>
   )
@@ -83,4 +120,5 @@ export const useAuth = () => useContext(AuthContext) || {
   login: async () => { throw new Error('AuthProvider no montado') },
   logout: () => {},
   tieneAcceso: () => false, puedeEditar: () => false, esAdmin: () => false,
+  primeraRutaPermitida: () => '/dashboard',
 }

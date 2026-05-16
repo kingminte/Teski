@@ -1,4 +1,4 @@
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useNavigate, useLocation, Navigate } from 'react-router-dom'
 import { useAuth } from '../lib/useAuth'
 import logo from '../assets/logo.png'
 
@@ -72,7 +72,16 @@ const PAGE_TITLES = {
 export default function Layout({ children }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
-  const { user, tieneAcceso, logout } = useAuth()
+  const { user, permisos, tieneAcceso, logout, primeraRutaPermitida } = useAuth()
+
+  // Si el usuario está en una ruta sin permiso, redirigir a su primera ruta permitida.
+  // Esperar a que `permisos` esté cargado (objeto no vacío) para usuarios no-admin.
+  const seccionActual = PATH_SECCION[pathname]
+  const permisosListos = user?.rol === 'admin' || Object.keys(permisos).length > 0
+  if (user && permisosListos && seccionActual && !tieneAcceso(seccionActual)) {
+    const destino = primeraRutaPermitida()
+    if (destino && destino !== pathname) return <Navigate to={destino} replace />
+  }
 
   const handleLogout = () => { logout(); window.location.href = '/' }
 

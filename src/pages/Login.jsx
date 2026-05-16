@@ -15,7 +15,7 @@ export default function Login() {
     setError('')
     try {
       const result = await login(username, password)
-      window.location.href = result.debe_cambiar_clave ? '/cambiar-clave' : '/dashboard'
+      window.location.href = result.debe_cambiar_clave ? '/cambiar-clave' : (result.rutaInicial || '/dashboard')
     } catch (err) {
       setError(err.message || 'Error al iniciar sesión')
       setLoading(false)
