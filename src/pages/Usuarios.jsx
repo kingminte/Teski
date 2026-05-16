@@ -199,11 +199,11 @@ export default function Usuarios() {
   }
 
   const handleResetearClave = async (u) => {
-    if (!confirm(`¿Resetear la clave de ${u.nombre}? La nueva clave será: teski2026`)) return
+    if (!confirm(`¿Resetear la clave de ${u.nombre}? La nueva clave será: teski2026 (se le pedirá cambiarla al loguearse)`)) return
     const hash = await hashPassword('teski2026')
-    const { error } = await supabase.from('usuarios').update({ password_hash: hash }).eq('id', u.id)
+    const { error } = await supabase.from('usuarios').update({ password_hash: hash, debe_cambiar_clave: true }).eq('id', u.id)
     if (error) showToast('Error al resetear', 'error')
-    else showToast('Clave reseteada. Nueva clave: teski2026')
+    else showToast('Clave reseteada. Nueva clave: teski2026 — el usuario deberá cambiarla al ingresar')
   }
 
   const handleToggleActivo = async (u) => {

@@ -17,6 +17,7 @@ import Cobranza from './pages/Cobranza'
 import CuentasPorPagar from './pages/CuentasPorPagar'
 import Usuarios from './pages/Usuarios'
 import SociosActivos from './pages/SociosActivos'
+import CambiarClave from './pages/CambiarClave'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -33,6 +34,14 @@ export default function App() {
     return (
       <AuthProvider user={null} onUserChange={setUser}>
         <Login />
+      </AuthProvider>
+    )
+  }
+
+  if (user.debe_cambiar_clave) {
+    return (
+      <AuthProvider user={user} onUserChange={setUser}>
+        <CambiarClave />
       </AuthProvider>
     )
   }

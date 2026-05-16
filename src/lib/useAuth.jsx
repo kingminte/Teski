@@ -48,7 +48,7 @@ export function AuthProvider({ children, user: userProp, onUserChange }) {
     await supabase.from('usuarios').update({ ultimo_acceso: new Date().toISOString() }).eq('id', data.id)
     localStorage.setItem('teski_user', JSON.stringify(data))
     onUserChange?.(data)
-    return data
+    return { debe_cambiar_clave: !!data.debe_cambiar_clave, user: data }
   }
 
   const logout = () => {
