@@ -45,9 +45,21 @@ export default function Cartola() {
   const [vista, setVista] = useState('movimientos')
   const [resumen, setResumen] = useState(null)
   const [conciliando, setConciliando] = useState({})
+  const [pagosSinConciliar, setPagosSinConciliar] = useState([])
+  const [filtroPagosSC, setFiltroPagosSC] = useState('todos')
+
+  const loadPagosSinConciliar = async () => {
+    const { data } = await supabase
+      .from('pagos_cuota')
+      .select('*, socios(nombre,apellido,numero_socio), periodos_cuota(anio), cheques(numero,estado)')
+      .is('movimiento_id', null)
+      .order('fecha_pago', { ascending: false })
+    setPagosSinConciliar(data || [])
+  }
 
   useEffect(() => {
     loadCartolas()
+    loadPagosSinConciliar()
     supabase.from('socios').select('id,nombre,apellido,rut,numero_socio').order('numero_socio').then(({ data }) => setSocios(data || []))
     supabase.from('periodos_cuota').select('*').order('anio', { ascending: false }).then(({ data }) => setPeriodos(data || []))
     // Cheques EMITIDOS desde chequera (Control chequera)
@@ -477,6 +489,9 @@ export default function Cartola() {
               </button>
               <button className={`btn btn-sm${vista === 'conciliacion' ? ' btn-primary' : ''}`} onClick={() => setVista('conciliacion')}>
                 <i className="ti ti-list-check"></i> Conciliación
+              </button>
+              <button className={`btn btn-sm${vista === 'sin_conciliar' ? ' btn-primary' : ''}`} onClick={() => { setVista('sin_conciliar'); loadPagosSinConciliar() }}>
+                <i className="ti ti-alert-circle"></i> Sin conciliar ({pagosSinConciliar.length})
               </button>
             </div>
           )}
@@ -913,6 +928,103 @@ export default function Cartola() {
           )}
         </>
       )}
+      {vista === 'sin_conciliar' && (() => {
+        const pagosFiltradosSC = pagosSinConciliar.filter(p => filtroPagosSC === 'todos' || p.forma_pago === filtroPagosSC)
+        const sum = (arr) => arr.reduce((t, p) => t + (p.monto || 0), 0)
+        const transferencias = pagosSinConciliar.filter(p => p.forma_pago === 'transferencia')
+        const chequesP = pagosSinConciliar.filter(p => p.forma_pago === 'cheque')
+        return (
+          <div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: '1rem' }}>
+              <div style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.85rem 1rem', borderLeft: '3px solid #fac775' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Pagos sin conciliar</div>
+                <div style={{ fontSize: 20, fontWeight: 'bold', color: '#fac775' }}>{pagosFiltradosSC.length}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginTop: 2 }}>Registrados manualmente</div>
+              </div>
+              <div style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.85rem 1rem', borderLeft: '3px solid #85b7eb' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Monto total</div>
+                <div style={{ fontSize: 20, fontWeight: 'bold', color: '#85b7eb' }}>{formatearMontoConSimbolo(sum(pagosFiltradosSC))}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginTop: 2 }}>Pendiente en cartola</div>
+              </div>
+              <div style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.85rem 1rem', borderLeft: '3px solid #5dcaa5' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Transferencias</div>
+                <div style={{ fontSize: 20, fontWeight: 'bold', color: '#5dcaa5' }}>{transferencias.length}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginTop: 2 }}>{formatearMontoConSimbolo(sum(transferencias))}</div>
+              </div>
+              <div style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.85rem 1rem', borderLeft: '3px solid var(--text-muted)' }}>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Cheques</div>
+                <div style={{ fontSize: 20, fontWeight: 'bold' }}>{chequesP.length}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginTop: 2 }}>{formatearMontoConSimbolo(sum(chequesP))}</div>
+              </div>
+            </div>
+
+            <div style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'sans-serif' }}>
+              <i className="ti ti-info-circle" style={{ fontSize: 16, flexShrink: 0 }}></i>
+              Estos son pagos registrados en el sistema (cuotas, incorporaciones) que aún no aparecen como movimientos en ninguna cartola bancaria cargada. Al cargar la cartola del período correspondiente, deberían conciliarse automáticamente.
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title"><i className="ti ti-alert-circle"></i> Pagos registrados pendientes de aparecer en cartola</div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {['todos','transferencia','cheque','efectivo'].map(f => (
+                    <button key={f} className={`btn btn-sm${filtroPagosSC === f ? ' btn-primary' : ''}`} onClick={() => setFiltroPagosSC(f)}>
+                      {f === 'todos' ? 'Todos' : f.charAt(0).toUpperCase() + f.slice(1) + 's'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {pagosFiltradosSC.length === 0 ? (
+                <div className="empty-state"><i className="ti ti-circle-check" style={{ color: '#5dcaa5' }}></i>Todos los pagos registrados están conciliados con la cartola</div>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Socio</th><th>Fecha pago</th><th>Concepto</th><th>Período</th><th>Monto</th><th>Forma pago</th><th>Detalle</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagosFiltradosSC.map(p => {
+                      const esIncorporacion = (p.concepto || '').toLowerCase().includes('incorpora')
+                      const conceptoStyle = esIncorporacion
+                        ? { background: 'rgba(239,159,39,0.15)', color: '#fac775', border: '0.5px solid rgba(239,159,39,0.3)' }
+                        : { background: 'rgba(55,138,221,0.15)', color: '#85b7eb', border: '0.5px solid rgba(55,138,221,0.3)' }
+                      return (
+                        <tr key={p.id}>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'rgba(55,138,221,0.2)', color: '#85b7eb', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 'bold', flexShrink: 0 }}>
+                                {p.socios ? `${p.socios.nombre?.[0] || ''}${p.socios.apellido?.[0] || ''}` : '??'}
+                              </div>
+                              <div>
+                                <div style={{ fontWeight: 500 }}>{p.socios ? `${p.socios.nombre} ${p.socios.apellido}` : '—'}</div>
+                                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>{p.socios?.numero_socio || ''}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td style={{ color: 'var(--text-muted)' }}>{p.fecha_pago ? p.fecha_pago.split('-').reverse().join('/') : '—'}</td>
+                          <td><span className="badge" style={conceptoStyle}>{p.concepto || '—'}</span></td>
+                          <td style={{ color: 'var(--text-muted)' }}>{p.periodos_cuota?.anio || '—'}</td>
+                          <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>{formatearMontoConSimbolo(p.monto)}</td>
+                          <td>
+                            {p.forma_pago === 'transferencia' && <span className="badge" style={{ background: 'rgba(55,138,221,0.15)', color: '#85b7eb', border: '0.5px solid rgba(55,138,221,0.3)' }}>Transferencia</span>}
+                            {p.forma_pago === 'cheque' && <span className="badge badge-inactive">Cheque</span>}
+                            {p.forma_pago === 'efectivo' && <span className="badge" style={{ background: 'rgba(29,158,117,0.15)', color: '#5dcaa5', border: '0.5px solid rgba(29,158,117,0.3)' }}>Efectivo</span>}
+                            {!['transferencia','cheque','efectivo'].includes(p.forma_pago) && <span className="badge badge-inactive">{p.forma_pago || '—'}</span>}
+                          </td>
+                          <td style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                            {p.cheques ? `Cheque N°${p.cheques.numero} · ${p.cheques.estado}` : (p.comentario || 'Registrado manualmente')}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        )
+      })()}
       {vista === 'movimientos' && selectedCartola && (
         <>
           {/* Banco y resumen */}
