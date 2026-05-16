@@ -161,40 +161,48 @@ export default function Usuarios() {
   const handleGuardar = async () => {
     if (!form.nombre.trim()) { showToast('El nombre es obligatorio', 'error'); return }
     if (!form.username.trim()) { showToast('El username es obligatorio', 'error'); return }
+    if (!editId && esSocio && !form.socio_id) { showToast('Selecciona un socio', 'error'); return }
     if (!editId && (!form.password || form.password.length < 6)) { showToast('La contraseña debe tener al menos 6 caracteres', 'error'); return }
     if (editId && form.password && form.password.length < 6) { showToast('La nueva contraseña debe tener al menos 6 caracteres', 'error'); return }
 
     setSaving(true)
-    let error
-    if (editId) {
-      const payload = {
-        nombre: form.nombre.trim(),
-        username: form.username.trim().toLowerCase(),
-        email: form.email || null,
-        rol: form.rol,
-        socio_id: form.rol === 'socio' ? (form.socio_id || null) : null,
+    try {
+      let error
+      if (editId) {
+        const payload = {
+          nombre: form.nombre.trim(),
+          username: form.username.trim().toLowerCase(),
+          email: form.email || null,
+          rol: form.rol,
+          socio_id: form.rol === 'socio' ? (form.socio_id || null) : null,
+        }
+        if (form.password) payload.password_hash = await hashPassword(form.password)
+        ;({ error } = await supabase.from('usuarios').update(payload).eq('id', editId))
+      } else {
+        const passwordHash = await hashPassword(form.password)
+        const payload = {
+          nombre: form.nombre.trim(),
+          username: form.username.trim().toLowerCase(),
+          email: form.email || null,
+          password_hash: passwordHash,
+          rol: form.rol,
+          socio_id: form.rol === 'socio' ? (form.socio_id || null) : null,
+        }
+        ;({ error } = await supabase.from('usuarios').insert(payload))
       }
-      if (form.password) payload.password_hash = await hashPassword(form.password)
-      ;({ error } = await supabase.from('usuarios').update(payload).eq('id', editId))
-    } else {
-      const passwordHash = await hashPassword(form.password)
-      const payload = {
-        nombre: form.nombre.trim(),
-        username: form.username.trim().toLowerCase(),
-        email: form.email || null,
-        password_hash: passwordHash,
-        rol: form.rol,
-        socio_id: form.rol === 'socio' ? (form.socio_id || null) : null,
+      if (error) {
+        console.error('Error guardando usuario:', error)
+        showToast(error.message.includes('unique') || error.code === '23505' ? 'El username ya existe' : 'Error al guardar: ' + error.message, 'error')
+      } else {
+        showToast(editId ? 'Usuario actualizado' : 'Usuario creado')
+        setShowModal(false)
+        loadAll()
       }
-      ;({ error } = await supabase.from('usuarios').insert(payload))
-    }
-    setSaving(false)
-    if (error) {
-      showToast(error.message.includes('unique') || error.code === '23505' ? 'El username ya existe' : 'Error al guardar: ' + error.message, 'error')
-    } else {
-      showToast(editId ? 'Usuario actualizado' : 'Usuario creado')
-      setShowModal(false)
-      loadAll()
+    } catch (e) {
+      console.error('Excepción al guardar usuario:', e)
+      showToast('Error inesperado: ' + (e?.message || 'desconocido'), 'error')
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -479,7 +487,7 @@ export default function Usuarios() {
                 </div>
                 <div className="modal-footer">
                   <button className="btn" onClick={() => setShowModal(false)}>Cancelar</button>
-                  <button className="btn btn-primary" onClick={handleGuardar} disabled={saving || (!editId && esSocio && !form.socio_id)}>
+                  <button className="btn btn-primary" onClick={handleGuardar} disabled={saving}>
                     {saving ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-check"></i> {editId ? 'Guardar cambios' : 'Crear usuario'}</>}
                   </button>
                 </div>
