@@ -468,22 +468,27 @@ export default function Cuotas() {
           </div>
 
           {/* Historial de pagos del período */}
-          {pagos.length > 0 && (
+          {(() => {
+            const pagosVisibles = esSocio && miSocioId ? pagos.filter(p => p.socio_id === miSocioId) : pagos
+            if (pagosVisibles.length === 0) return null
+            return (
             <div className="card">
               <div className="card-header">
-                <div className="card-title"><i className="ti ti-clock"></i> Historial de pagos — {selectedPeriodo.anio}</div>
+                <div className="card-title"><i className="ti ti-clock"></i> {esSocio ? 'Mi historial de pagos' : 'Historial de pagos'} — {selectedPeriodo.anio}</div>
               </div>
               <table>
-                <thead><tr><th>Socio</th><th>Fecha</th><th>Monto</th><th>Forma pago</th><th>Comentario</th><th></th></tr></thead>
+                <thead><tr>{!esSocio && <th>Socio</th>}<th>Fecha</th><th>Monto</th><th>Forma pago</th><th>Comentario</th><th></th></tr></thead>
                 <tbody>
-                  {pagos.map(p => (
+                  {pagosVisibles.map(p => (
                     <tr key={p.id}>
-                      <td>
-                        <div className="name-cell">
-                          <div className="avatar" style={{ background: 'rgba(83,74,183,0.3)', color: '#afa9ec' }}>{p.socios?.nombre[0]}{p.socios?.apellido[0]}</div>
-                          <div>{p.socios?.nombre} {p.socios?.apellido}<div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{p.socios?.numero_socio}</div></div>
-                        </div>
-                      </td>
+                      {!esSocio && (
+                        <td>
+                          <div className="name-cell">
+                            <div className="avatar" style={{ background: 'rgba(83,74,183,0.3)', color: '#afa9ec' }}>{p.socios?.nombre[0]}{p.socios?.apellido[0]}</div>
+                            <div>{p.socios?.nombre} {p.socios?.apellido}<div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{p.socios?.numero_socio}</div></div>
+                          </div>
+                        </td>
+                      )}
                       <td style={{ color: 'var(--text-muted)' }}>{new Date(p.fecha_pago).toLocaleDateString('es-CL')}</td>
                       <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>${p.monto.toLocaleString('es-CL')}</td>
                       <td>
@@ -498,7 +503,8 @@ export default function Cuotas() {
                 </tbody>
               </table>
             </div>
-          )}
+            )
+          })()}
         </>
         )
       })()}
