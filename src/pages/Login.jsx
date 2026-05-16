@@ -30,11 +30,11 @@ export default function Login() {
 
         <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="form-group">
-            <label>Correo electrónico</label>
+            <label>Usuario</label>
             <input
-              type="email" required
+              type="text" required
               value={email} onChange={e => setEmail(e.target.value)}
-              placeholder="admin@teskiclub.cl"
+              placeholder="Usuario"
             />
           </div>
           <div className="form-group">
