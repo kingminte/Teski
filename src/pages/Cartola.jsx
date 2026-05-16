@@ -48,6 +48,7 @@ export default function Cartola() {
   const [pagosSinConciliar, setPagosSinConciliar] = useState([])
   const [filtroPagosSC, setFiltroPagosSC] = useState('todos')
   const [periodoPagosSC, setPeriodoPagosSC] = useState('todos')
+  const [otrosIngresosForm, setOtrosIngresosForm] = useState({})
 
   const loadPagosSinConciliar = async () => {
     const { data } = await supabase
@@ -415,6 +416,37 @@ export default function Cartola() {
     }
   }
 
+  const toggleOtrosIngresos = (movId) => {
+    setOtrosIngresosForm(prev => ({
+      ...prev,
+      [movId]: prev[movId]?.abierto
+        ? { ...prev[movId], abierto: false }
+        : { concepto: '', descripcion: '', abierto: true }
+    }))
+  }
+
+  const handleConfirmarOtrosIngresos = async (mov) => {
+    const form = otrosIngresosForm[mov.id]
+    if (!form?.concepto) { showToast('Selecciona un concepto', 'error'); return }
+    try {
+      const { error: e1 } = await supabase.from('otros_ingresos').insert({
+        movimiento_id: mov.id,
+        concepto: form.concepto,
+        descripcion: form.descripcion || mov.descripcion,
+        monto: mov.monto,
+        fecha: mov.fecha,
+      })
+      if (e1) throw new Error(e1.message)
+      const { error: e2 } = await supabase.from('movimientos').update({ estado: 'conciliado' }).eq('id', mov.id)
+      if (e2) throw new Error(e2.message)
+      showToast(`Registrado como otros ingresos: ${form.concepto}`)
+      setOtrosIngresosForm(prev => { const n = { ...prev }; delete n[mov.id]; return n })
+      loadMovimientos(selectedCartola.id)
+    } catch (e) {
+      showToast('Error: ' + e.message, 'error')
+    }
+  }
+
   const handleDesconciliar = async (mov) => {
     if (!confirm('¿Desconciliar este movimiento? Se eliminarán los pagos de cuota y otros ingresos asociados, y el movimiento volverá a estado pendiente.')) return
     try {
@@ -641,6 +673,10 @@ export default function Cartola() {
                                     <i className="ti ti-refresh"></i> Cambiar
                                   </button>
                                 )}
+                                <button className="btn btn-sm" style={{ color: '#afa9ec', borderColor: 'rgba(175,169,236,0.4)', fontSize: 11 }}
+                                  onClick={() => toggleOtrosIngresos(mov.id)} title="Registrar como otros ingresos en lugar de pago de socio">
+                                  <i className="ti ti-coin"></i> Otros ingresos
+                                </button>
                                 <button className="btn btn-sm" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)' }} onClick={() => toggleForm(mov.id)}>
                                   <i className={`ti ${c.abierto ? 'ti-chevron-up' : 'ti-adjustments'}`}></i>
                                   {c.abierto ? 'Cerrar' : 'Conciliar'}
@@ -671,12 +707,53 @@ export default function Cartola() {
                                   <i className="ti ti-x"></i>
                                 </button>
                               )}
+                              <button className="btn btn-sm" style={{ color: '#afa9ec', borderColor: 'rgba(175,169,236,0.4)' }}
+                                onClick={() => toggleOtrosIngresos(mov.id)} title="Registrar como otros ingresos">
+                                <i className="ti ti-coin"></i> Otros ingresos
+                              </button>
                               <button className="btn btn-sm" onClick={() => toggleForm(mov.id)}>
                                 <i className="ti ti-adjustments"></i>
                               </button>
                             </div>
                           </div>
                         ) : null}
+
+                        {/* Formulario de otros ingresos */}
+                        {editable && otrosIngresosForm[mov.id]?.abierto && (
+                          <div style={{ background: 'rgba(175,169,236,0.06)', border: '0.5px solid rgba(175,169,236,0.3)', borderRadius: 8, padding: '1rem', marginTop: 6 }}>
+                            <div style={{ fontSize: 12, fontWeight: 500, color: '#afa9ec', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
+                              <i className="ti ti-coin" style={{ fontSize: 16 }}></i> Registrar como otros ingresos
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                              <div>
+                                <label style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 3, fontFamily: 'sans-serif' }}>Concepto *</label>
+                                <select value={otrosIngresosForm[mov.id]?.concepto || ''}
+                                  onChange={e => setOtrosIngresosForm(prev => ({ ...prev, [mov.id]: { ...prev[mov.id], concepto: e.target.value } }))}>
+                                  <option value="">Seleccionar del plan de cuentas…</option>
+                                  {planCuentas.filter(pc => pc.tipo === 'ingreso').map(pc => (
+                                    <option key={pc.id} value={pc.nombre}>{pc.nombre}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div>
+                                <label style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, display: 'block', marginBottom: 3, fontFamily: 'sans-serif' }}>Descripción (opcional)</label>
+                                <input type="text" placeholder="Detalle del ingreso…" value={otrosIngresosForm[mov.id]?.descripcion || ''}
+                                  onChange={e => setOtrosIngresosForm(prev => ({ ...prev, [mov.id]: { ...prev[mov.id], descripcion: e.target.value } }))} />
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                                Monto: <strong style={{ color: '#5dcaa5' }}>{formatearMontoConSimbolo(mov.monto)}</strong> · Fecha: {mov.fecha.split('-').reverse().join('/')}
+                              </div>
+                              <div style={{ display: 'flex', gap: 6 }}>
+                                <button className="btn btn-sm" onClick={() => toggleOtrosIngresos(mov.id)}>Cancelar</button>
+                                <button className="btn btn-sm btn-primary" onClick={() => handleConfirmarOtrosIngresos(mov)} disabled={!otrosIngresosForm[mov.id]?.concepto}>
+                                  <i className="ti ti-check"></i> Confirmar
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Formulario de distribución multi-concepto */}
                         {editable && c.abierto && (() => {
@@ -765,7 +842,22 @@ export default function Cartola() {
                     })()}
 
                     {/* Conciliado */}
-                    {mov.estado === 'conciliado' && (() => {
+                    {mov.estado === 'conciliado' && !mov.socio_id && (
+                      <div style={{ background: 'rgba(175,169,236,0.1)', border: '0.5px solid rgba(175,169,236,0.3)', borderRadius: 8, padding: '0.6rem 0.9rem', fontSize: 12, color: '#afa9ec', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <i className="ti ti-coin" style={{ fontSize: 16 }}></i>
+                          Otros ingresos · <strong>{formatearMontoConSimbolo(mov.monto)}</strong>
+                        </div>
+                        {editable && (
+                          <button className="btn btn-sm" style={{ color: '#f09595', borderColor: 'rgba(240,149,149,0.4)', fontSize: 11 }}
+                            onClick={() => handleDesconciliar(mov)}>
+                            <i className="ti ti-arrow-back-up"></i> Desconciliar
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {mov.estado === 'conciliado' && mov.socio_id && (() => {
                       const pagosDelMov = getPagosDelMovimiento(mov.id)
                       const tieneMultiples = pagosDelMov.length > 1
                       return (
