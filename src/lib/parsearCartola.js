@@ -98,28 +98,32 @@ export function extraerCabeceraUltimosMovimientos(rows) {
   return info
 }
 
-// Extrae el RUT del campo descripción de Santander
-// Ej: "0140968684 Transf. SANDRA..." → "14.096.868-4"
-export function extraerRutDesdeDescripcion(descripcion) {
-  if (!descripcion) return null
-  const match = descripcion.trim().match(/^(\d{7,10})/)
-  if (!match) return null
-  const numStr = match[1]
-  // El último dígito es el DV
-  const dv = numStr.slice(-1)
-  const num = parseInt(numStr.slice(0, -1))
-  if (isNaN(num) || num < 100000) return null
-  return formatearRutDesdeNumero(num, dv)
+// Extrae el RUT del campo descripción de Santander.
+// Formato típico: "008768511K Transf de JUAN PEREZ" → "8.768.511-K"
+// El bloque numérico al inicio incluye ceros a la izquierda + cuerpo + DV (0-9 o K).
+export function extraerRutDesdeDescripcion(desc) {
+  if (!desc) return null
+  const trimmed = desc.trim()
+
+  // Patrón 1: RUT al inicio como bloque "0+cuerpo+dv" (formato Santander).
+  const matchInicio = trimmed.match(/^0*(\d{7,8})([\dkK])\s/)
+  if (matchInicio) return formatRut(matchInicio[1], matchInicio[2])
+
+  // Patrón 2: RUT ya formateado con puntos y guión en cualquier parte.
+  const matchFormateado = trimmed.match(/\b(\d{1,2}\.\d{3}\.\d{3})-([\dkK])\b/i)
+  if (matchFormateado) return `${matchFormateado[1]}-${matchFormateado[2].toUpperCase()}`
+
+  // Patrón 3: RUT sin formato en cualquier parte (7-8 dígitos + DV).
+  const matchSinFormato = trimmed.match(/\b(\d{7,8})([\dkK])\b/i)
+  if (matchSinFormato) return formatRut(matchSinFormato[1], matchSinFormato[2])
+
+  return null
 }
 
-function formatearRutDesdeNumero(num, dv) {
-  const s = String(num)
-  let formatted
-  if (s.length <= 3) formatted = s
-  else if (s.length <= 6) formatted = s.slice(0,-3) + '.' + s.slice(-3)
-  else if (s.length <= 9) formatted = s.slice(0,-6) + '.' + s.slice(-6,-3) + '.' + s.slice(-3)
-  else formatted = s.slice(0,-9) + '.' + s.slice(-9,-6) + '.' + s.slice(-6,-3) + '.' + s.slice(-3)
-  return formatted + '-' + dv.toUpperCase()
+function formatRut(cuerpo, dv) {
+  const n = parseInt(cuerpo, 10)
+  if (isNaN(n) || n < 100000) return null
+  return n.toLocaleString('es-CL').replace(/,/g, '.') + '-' + dv.toUpperCase()
 }
 
 // Extrae el nombre de la descripción
