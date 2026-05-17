@@ -309,21 +309,44 @@ export default function OtrosIngresos() {
                               )}
                             </div>
                             <div>
-                              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6, fontFamily: 'sans-serif' }}>Respaldo</div>
+                              <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6, fontFamily: 'sans-serif' }}>Respaldos</div>
                               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-                                {ing.nombre_archivo ? (
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, background: 'var(--navy-card)', border: '0.5px solid var(--border)', fontSize: 11, cursor: 'pointer' }}
-                                    onClick={() => verArchivo(ing.storage_path)}>
-                                    <i className={`ti ${ing.nombre_archivo.toLowerCase().endsWith('.pdf') ? 'ti-file-type-pdf' : 'ti-photo'}`} style={{ color: ing.nombre_archivo.toLowerCase().endsWith('.pdf') ? '#f09595' : '#85b7eb' }}></i>
-                                    {ing.nombre_archivo}
-                                    <i className="ti ti-eye" style={{ color: 'var(--text-muted)', fontSize: 12, marginLeft: 4 }}></i>
-                                  </span>
+                                {ing.nombre_archivo && ing.storage_path ? (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 6, padding: '4px 10px', fontSize: 11 }}>
+                                    <i className={`ti ${ing.nombre_archivo.toLowerCase().endsWith('.pdf') ? 'ti-file-type-pdf' : 'ti-photo'}`} style={{ fontSize: 14, color: ing.nombre_archivo.toLowerCase().endsWith('.pdf') ? '#f09595' : '#85b7eb' }}></i>
+                                    <span style={{ color: '#c8d0dc' }}>{ing.nombre_archivo}</span>
+                                    <button style={{ background: 'none', border: 'none', color: '#85b7eb', cursor: 'pointer', padding: '0 4px', fontSize: 14, display: 'flex' }} title="Ver"
+                                      onClick={async (e) => { e.stopPropagation(); await verArchivo(ing.storage_path) }}>
+                                      <i className="ti ti-eye"></i>
+                                    </button>
+                                    <button style={{ background: 'none', border: 'none', color: '#5dcaa5', cursor: 'pointer', padding: '0 4px', fontSize: 14, display: 'flex' }} title="Descargar"
+                                      onClick={async (e) => {
+                                        e.stopPropagation()
+                                        const { data } = await supabase.storage.from('cartolas').createSignedUrl(ing.storage_path, 300)
+                                        if (data?.signedUrl) { const a = document.createElement('a'); a.href = data.signedUrl; a.download = ing.nombre_archivo; a.click() }
+                                      }}>
+                                      <i className="ti ti-download"></i>
+                                    </button>
+                                    {editable && (
+                                      <button style={{ background: 'none', border: 'none', color: '#f09595', cursor: 'pointer', padding: '0 4px', fontSize: 14, display: 'flex' }} title="Eliminar respaldo"
+                                        onClick={async (e) => {
+                                          e.stopPropagation()
+                                          if (!confirm('¿Eliminar este respaldo?')) return
+                                          await supabase.storage.from('cartolas').remove([ing.storage_path])
+                                          await supabase.from('otros_ingresos').update({ storage_path: null, nombre_archivo: null }).eq('id', ing.id)
+                                          showToast('Respaldo eliminado')
+                                          loadIngresos()
+                                        }}>
+                                        <i className="ti ti-trash"></i>
+                                      </button>
+                                    )}
+                                  </div>
                                 ) : (
                                   <span style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>Sin respaldo adjunto</span>
                                 )}
                                 {editable && (
                                   <>
-                                    <button className="btn btn-sm" onClick={() => document.getElementById(`file-ing-${ing.id}`).click()}>
+                                    <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); document.getElementById(`file-ing-${ing.id}`).click() }}>
                                       <i className="ti ti-upload"></i> {ing.nombre_archivo ? 'Reemplazar' : 'Subir'}
                                     </button>
                                     <input type="file" id={`file-ing-${ing.id}`} style={{ display: 'none' }} accept=".pdf,.jpg,.jpeg,.png"
@@ -333,18 +356,20 @@ export default function OtrosIngresos() {
                               </div>
                             </div>
                           </div>
-                          {editable && ing.origen !== 'cartola' && (
-                            <div style={{ display: 'flex', gap: 6, marginTop: 12, paddingTop: 10, borderTop: '0.5px solid var(--border)' }}>
-                              <button className="btn btn-sm" onClick={() => openEdit(ing)}><i className="ti ti-edit"></i> Editar</button>
-                              <button className="btn btn-sm btn-danger" onClick={() => handleEliminar(ing)}>
-                                <i className="ti ti-trash"></i> Eliminar
+                          {editable && (
+                            <div style={{ display: 'flex', gap: 6, marginTop: 12, paddingTop: 10, borderTop: '0.5px solid var(--border)', alignItems: 'center' }}>
+                              <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openEdit(ing) }}>
+                                <i className="ti ti-edit"></i> Editar
                               </button>
-                            </div>
-                          )}
-                          {ing.origen === 'cartola' && (
-                            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '0.5px solid var(--border)', fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <i className="ti ti-info-circle"></i>
-                              Este ingreso vino de la conciliación de una cartola. Para eliminarlo, desconcilia el movimiento desde la página Cartola.
+                              {ing.origen !== 'cartola' ? (
+                                <button className="btn btn-sm btn-danger" onClick={(e) => { e.stopPropagation(); handleEliminar(ing) }}>
+                                  <i className="ti ti-trash"></i> Eliminar
+                                </button>
+                              ) : (
+                                <span style={{ fontSize: 11, color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 4, fontFamily: 'sans-serif' }}>
+                                  <i className="ti ti-info-circle"></i> Para eliminarlo, desconcilia el movimiento desde la página Cartola
+                                </span>
+                              )}
                             </div>
                           )}
                         </td>
