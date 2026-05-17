@@ -15,6 +15,7 @@ import Bancos from './pages/Bancos'
 import Reporteria from './pages/Reporteria'
 import Cobranza from './pages/Cobranza'
 import CuentasPorPagar from './pages/CuentasPorPagar'
+import OtrosIngresos from './pages/OtrosIngresos'
 import Usuarios from './pages/Usuarios'
 import SociosActivos from './pages/SociosActivos'
 import CambiarClave from './pages/CambiarClave'
@@ -57,6 +58,7 @@ export default function App() {
           <Route path="/beneficiarios/:socioId" element={<Beneficiarios />} />
           <Route path="/socios-activos" element={<SociosActivos />} />
           <Route path="/cuentas-por-pagar" element={<CuentasPorPagar />} />
+          <Route path="/otros-ingresos" element={<OtrosIngresos />} />
           <Route path="/cartola" element={<Cartola />} />
           <Route path="/cuotas" element={<Cuotas />} />
           <Route path="/cobranza" element={<Cobranza />} />

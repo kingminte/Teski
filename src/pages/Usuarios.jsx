@@ -24,6 +24,7 @@ const SECCIONES = [
   { id: 'cheques', label: 'Cheques recibidos', icon: 'ti-writing' },
   { id: 'chequera', label: 'Control chequera', icon: 'ti-book' },
   { id: 'cuentas_por_pagar', label: 'Cuentas por pagar', icon: 'ti-file-invoice' },
+  { id: 'otros_ingresos', label: 'Otros ingresos', icon: 'ti-coin' },
   { id: 'cobranza', label: 'Cobranza', icon: 'ti-mail-forward' },
   { id: 'configuracion', label: 'Configuración', icon: 'ti-settings' },
   { id: 'reporteria', label: 'Reportería', icon: 'ti-chart-bar' },
