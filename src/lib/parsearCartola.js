@@ -45,7 +45,8 @@ export function parsearUltimosMovimientos(rows) {
     if (partesFecha.length < 3) continue
     const dia = partesFecha[0].padStart(2, '0')
     const mes = partesFecha[1].padStart(2, '0')
-    const anio = partesFecha[2].length === 2 ? '20' + partesFecha[2] : partesFecha[2]
+    let anio = partesFecha[2]
+    if (anio.length === 2) anio = (parseInt(anio) > 50 ? '19' : '20') + anio
     const fecha = `${anio}-${mes}-${dia}`
 
     const descripcion = r1
@@ -133,9 +134,12 @@ export function extraerNombreDesdeDescripcion(descripcion) {
 }
 
 // Parsea las filas de la hoja de Santander y retorna movimientos normalizados
-export function parsearCartolaSantander(rows) {
+export function parsearCartolaSantander(rows, anioDefault = null) {
   const movimientos = []
   let enDetalle = false
+  // Si no se pasa anioDefault, intentar detectarlo desde la cabecera
+  const cabecera = anioDefault ? null : extraerCabeceraCartola(rows)
+  const anioFallback = anioDefault || cabecera?.anio || new Date().getFullYear()
 
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
@@ -163,10 +167,16 @@ export function parsearCartolaSantander(rows) {
     if (!fechaStr.match(/^\d{1,2}[\/\-]\d{1,2}/)) continue
 
     const partesFecha = fechaStr.split(/[\/\-]/)
-    const anioActual = new Date().getFullYear()
     const dia = partesFecha[0].padStart(2, '0')
     const mes = partesFecha[1].padStart(2, '0')
-    const anio = partesFecha[2] ? (partesFecha[2].length === 2 ? '20' + partesFecha[2] : partesFecha[2]) : String(anioActual)
+    let anio
+    if (partesFecha[2]) {
+      anio = partesFecha[2].length === 2
+        ? (parseInt(partesFecha[2]) > 50 ? '19' : '20') + partesFecha[2]
+        : partesFecha[2]
+    } else {
+      anio = String(anioFallback)
+    }
     const fecha = `${anio}-${mes}-${dia}`
 
     const sucursal = String(row[1] || '').trim()
