@@ -35,6 +35,7 @@ export default function Cartola() {
   const [rutAlias, setRutAlias] = useState([])
   const [cambiandoAlias, setCambiandoAlias] = useState({}) // { movId: true }
   const [pagosMovimientos, setPagosMovimientos] = useState([])
+  const [otrosIngresosTodos, setOtrosIngresosTodos] = useState([])
   const [vinculandoCargo, setVinculandoCargo] = useState({}) // { movId: chequeId }
 
   const normRut = (r) => r ? r.replace(/\s/g,'').replace(/\./g,'').toLowerCase() : ''
@@ -107,17 +108,20 @@ export default function Cartola() {
 
     const movIds = (data || []).filter(m => m.estado === 'conciliado').map(m => m.id)
     if (movIds.length > 0) {
-      const { data: pagos } = await supabase
-        .from('pagos_cuota')
-        .select('*, periodos_cuota(anio)')
-        .in('movimiento_id', movIds)
+      const [{ data: pagos }, { data: otros }] = await Promise.all([
+        supabase.from('pagos_cuota').select('*, periodos_cuota(anio)').in('movimiento_id', movIds),
+        supabase.from('otros_ingresos').select('*').in('movimiento_id', movIds),
+      ])
       setPagosMovimientos(pagos || [])
+      setOtrosIngresosTodos(otros || [])
     } else {
       setPagosMovimientos([])
+      setOtrosIngresosTodos([])
     }
   }
 
   const getPagosDelMovimiento = (movId) => pagosMovimientos.filter(p => p.movimiento_id === movId)
+  const getOtroIngresoDe = (movId) => otrosIngresosTodos.find(o => o.movimiento_id === movId)
 
   const conceptoColor = (concepto) => {
     const c = (concepto || '').toLowerCase()
@@ -429,12 +433,28 @@ export default function Cartola() {
     const form = otrosIngresosForm[mov.id]
     if (!form?.concepto) { showToast('Selecciona un concepto', 'error'); return }
     try {
+      let storagePath = null
+      let nombreArchivo = null
+      if (form.archivo) {
+        const path = `otros_ingresos/${mov.id}/${Date.now()}_${form.archivo.name}`
+        const { error: upErr } = await supabase.storage.from('cartolas').upload(path, form.archivo)
+        if (upErr) {
+          console.error('Error subiendo archivo:', upErr)
+          showToast('Aviso: ingreso registrado, pero no se pudo subir el archivo', 'error')
+        } else {
+          storagePath = path
+          nombreArchivo = form.archivo.name
+        }
+      }
+
       const { error: e1 } = await supabase.from('otros_ingresos').insert({
         movimiento_id: mov.id,
         concepto: form.concepto,
         descripcion: form.descripcion || mov.descripcion,
         monto: mov.monto,
         fecha: mov.fecha,
+        storage_path: storagePath,
+        nombre_archivo: nombreArchivo,
       })
       if (e1) throw new Error(e1.message)
       const { error: e2 } = await supabase.from('movimientos').update({ estado: 'conciliado' }).eq('id', mov.id)
@@ -741,6 +761,35 @@ export default function Cartola() {
                                   onChange={e => setOtrosIngresosForm(prev => ({ ...prev, [mov.id]: { ...prev[mov.id], descripcion: e.target.value } }))} />
                               </div>
                             </div>
+                            <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <label style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif' }}>Respaldo</label>
+                              <input
+                                type="file"
+                                accept=".pdf,.jpg,.jpeg,.png"
+                                id={`file-otros-${mov.id}`}
+                                style={{ display: 'none' }}
+                                onChange={e => {
+                                  const file = e.target.files[0]
+                                  if (file) setOtrosIngresosForm(prev => ({ ...prev, [mov.id]: { ...prev[mov.id], archivo: file } }))
+                                }}
+                              />
+                              {otrosIngresosForm[mov.id]?.archivo ? (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(175,169,236,0.1)', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontFamily: 'sans-serif' }}>
+                                  <i className={`ti ${otrosIngresosForm[mov.id].archivo.name.toLowerCase().endsWith('.pdf') ? 'ti-file-type-pdf' : 'ti-photo'}`} style={{ fontSize: 14, color: '#afa9ec' }}></i>
+                                  <span style={{ color: '#c8d0dc' }}>{otrosIngresosForm[mov.id].archivo.name}</span>
+                                  <button style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: 14, padding: 0, display: 'flex' }}
+                                    onClick={() => setOtrosIngresosForm(prev => ({ ...prev, [mov.id]: { ...prev[mov.id], archivo: null } }))}
+                                    title="Quitar archivo">
+                                    <i className="ti ti-x"></i>
+                                  </button>
+                                </div>
+                              ) : (
+                                <button className="btn btn-sm" style={{ color: '#afa9ec', borderColor: 'rgba(175,169,236,0.4)' }}
+                                  onClick={() => document.getElementById(`file-otros-${mov.id}`).click()}>
+                                  <i className="ti ti-paperclip"></i> Adjuntar archivo
+                                </button>
+                              )}
+                            </div>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                               <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
                                 Monto: <strong style={{ color: '#5dcaa5' }}>{formatearMontoConSimbolo(mov.monto)}</strong> · Fecha: {mov.fecha.split('-').reverse().join('/')}
@@ -842,20 +891,38 @@ export default function Cartola() {
                     })()}
 
                     {/* Conciliado */}
-                    {mov.estado === 'conciliado' && !mov.socio_id && (
-                      <div style={{ background: 'rgba(175,169,236,0.1)', border: '0.5px solid rgba(175,169,236,0.3)', borderRadius: 8, padding: '0.6rem 0.9rem', fontSize: 12, color: '#afa9ec', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    {mov.estado === 'conciliado' && !mov.socio_id && (() => {
+                      const otroIngreso = getOtroIngresoDe(mov.id)
+                      return (
+                      <div style={{ background: 'rgba(175,169,236,0.1)', border: '0.5px solid rgba(175,169,236,0.3)', borderRadius: 8, padding: '0.6rem 0.9rem', fontSize: 12, color: '#afa9ec', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <i className="ti ti-coin" style={{ fontSize: 16 }}></i>
-                          Otros ingresos · <strong>{formatearMontoConSimbolo(mov.monto)}</strong>
+                          Otros ingresos
+                          {otroIngreso?.concepto && <span style={{ color: '#c8d0dc' }}>· {otroIngreso.concepto}</span>}
+                          <span>· <strong>{formatearMontoConSimbolo(mov.monto)}</strong></span>
                         </div>
-                        {editable && (
-                          <button className="btn btn-sm" style={{ color: '#f09595', borderColor: 'rgba(240,149,149,0.4)', fontSize: 11 }}
-                            onClick={() => handleDesconciliar(mov)}>
-                            <i className="ti ti-arrow-back-up"></i> Desconciliar
-                          </button>
-                        )}
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          {otroIngreso?.nombre_archivo && (
+                            <button className="btn btn-sm" style={{ color: '#afa9ec', borderColor: 'rgba(175,169,236,0.4)', fontSize: 11 }}
+                              onClick={async () => {
+                                const { data } = await supabase.storage.from('cartolas').createSignedUrl(otroIngreso.storage_path, 300)
+                                if (data?.signedUrl) window.open(data.signedUrl, '_blank')
+                                else showToast('Error al obtener el archivo', 'error')
+                              }}
+                              title={otroIngreso.nombre_archivo}>
+                              <i className="ti ti-eye"></i> Ver respaldo
+                            </button>
+                          )}
+                          {editable && (
+                            <button className="btn btn-sm" style={{ color: '#f09595', borderColor: 'rgba(240,149,149,0.4)', fontSize: 11 }}
+                              onClick={() => handleDesconciliar(mov)}>
+                              <i className="ti ti-arrow-back-up"></i> Desconciliar
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    )}
+                      )
+                    })()}
 
                     {mov.estado === 'conciliado' && mov.socio_id && (() => {
                       const pagosDelMov = getPagosDelMovimiento(mov.id)
