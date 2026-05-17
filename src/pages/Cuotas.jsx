@@ -45,8 +45,7 @@ export default function Cuotas() {
     supabase.from('cheques').select('*').eq('socio_id', miSocioId).order('fecha_deposito', { ascending: true }).then(({ data }) => setMisCheques(data || []))
   }, [esSocio, miSocioId])
 
-  // Cargar socios filtrados por año del período seleccionado
-  useEffect(() => {
+  const loadSocios = async () => {
     if (!selectedPeriodo) return
     const anio = selectedPeriodo.anio
     let query = supabase
@@ -55,19 +54,42 @@ export default function Cuotas() {
       .lte('fecha_ingreso', `${anio}-12-31`)
       .order('numero_socio')
     if (esSocio && miSocioId) query = query.eq('id', miSocioId)
-    query
-      .then(({ data }) => {
-        // Filtrar inactivos que se fueron antes del año
-        const filtrados = (data || []).filter(s => {
-          if (s.estado === 'inactivo' && s.fecha_inactividad) {
-            const anioInactividad = parseInt(s.fecha_inactividad.slice(0, 4))
-            if (anioInactividad < anio) return false
-          }
-          return true
-        })
-        setSocios(filtrados)
-      })
-  }, [selectedPeriodo])
+    const { data } = await query
+    const filtrados = (data || []).filter(s => {
+      if (s.estado === 'inactivo' && s.fecha_inactividad) {
+        const anioInactividad = parseInt(s.fecha_inactividad.slice(0, 4))
+        if (anioInactividad < anio) return false
+      }
+      return true
+    })
+    setSocios(filtrados)
+  }
+
+  useEffect(() => { loadSocios() }, [selectedPeriodo])
+
+  const handleCambiarEstadoSocio = async (s, nuevoEstado) => {
+    const estadoAnterior = s.estado
+    if (estadoAnterior === nuevoEstado) return
+    const { error } = await supabase.from('socios').update({ estado: nuevoEstado }).eq('id', s.id)
+    if (error) { showToast('Error al cambiar estado: ' + error.message, 'error'); return }
+
+    let extra = ''
+    if (nuevoEstado === 'inactivo' && estadoAnterior !== 'inactivo') {
+      const { data: benes } = await supabase.from('beneficiarios').select('id,estado').eq('socio_id', s.id)
+      for (const b of (benes || [])) {
+        await supabase.from('beneficiarios').update({ estado_previo: b.estado, estado: 'inactivo' }).eq('id', b.id)
+      }
+      if (benes?.length) extra = ` · ${benes.length} beneficiario(s) desactivado(s)`
+    } else if (nuevoEstado === 'activo' && estadoAnterior === 'inactivo') {
+      const { data: benes } = await supabase.from('beneficiarios').select('id,estado_previo').eq('socio_id', s.id)
+      for (const b of (benes || [])) {
+        await supabase.from('beneficiarios').update({ estado: b.estado_previo || 'vigente', estado_previo: null }).eq('id', b.id)
+      }
+      if (benes?.length) extra = ` · ${benes.length} beneficiario(s) restaurado(s)`
+    }
+    showToast(`${s.nombre} ${s.apellido} → ${nuevoEstado}${extra}`)
+    loadSocios()
+  }
 
   useEffect(() => { if (selectedPeriodo) loadPagos(selectedPeriodo.id) }, [selectedPeriodo])
 
@@ -281,7 +303,7 @@ export default function Cuotas() {
             ) : (
               <table>
                 <thead>
-                  <tr><th>Socio</th><th>Pagado</th><th>Pendiente</th><th>Estado</th><th>Última fecha</th>{editable && <th>Acciones</th>}</tr>
+                  <tr><th>Socio</th><th>Estado socio</th><th>Pagado</th><th>Pendiente</th><th>Estado</th><th>Última fecha</th>{editable && <th>Acciones</th>}</tr>
                 </thead>
                 <tbody>
                   {sociosFiltrados.map(s => {
@@ -307,6 +329,26 @@ export default function Cuotas() {
                                 )}
                               </div>
                             </div>
+                          </div>
+                        </td>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            {s.estado === 'activo' && <span className="badge badge-active">Activo</span>}
+                            {s.estado === 'inactivo' && <span className="badge badge-inactive">Inactivo</span>}
+                            {s.estado === 'pendiente' && <span className="badge badge-pending">Pendiente</span>}
+                            {editable && !esSocio && (
+                              <select
+                                value={s.estado || 'activo'}
+                                onChange={e => handleCambiarEstadoSocio(s, e.target.value)}
+                                onClick={e => e.stopPropagation()}
+                                title="Cambiar estado del socio"
+                                style={{ fontSize: 11, padding: '2px 6px', width: 'auto', background: 'transparent', border: '0.5px solid var(--border)', borderRadius: 4, color: 'var(--text-muted)', cursor: 'pointer' }}
+                              >
+                                <option value="activo">Activo</option>
+                                <option value="pendiente">Pendiente</option>
+                                <option value="inactivo">Inactivo</option>
+                              </select>
+                            )}
                           </div>
                         </td>
                         <td>
