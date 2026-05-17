@@ -62,6 +62,7 @@ export default function CuentasPorPagar() {
   // Modal Nueva cuenta
   const [showNueva, setShowNueva] = useState(false)
   const [formNueva, setFormNueva] = useState(EMPTY_CUENTA)
+  const [editCuentaId, setEditCuentaId] = useState(null)
   const [montoNueva, setMontoNueva] = useState('')
   const [enCuotas, setEnCuotas] = useState(false)
   const [nCuotas, setNCuotas] = useState(2)
@@ -150,7 +151,39 @@ export default function CuentasPorPagar() {
     setEnCuotas(false)
     setNCuotas(2)
     setCuotasProgramadas([])
+    setEditCuentaId(null)
     setShowNueva(true)
+  }
+
+  const abrirEditarCuenta = (cuenta) => {
+    setFormNueva({
+      proveedor_id: cuenta.proveedor_id || '',
+      concepto: cuenta.concepto || '',
+      descripcion: cuenta.descripcion || '',
+      categoria: cuenta.categoria || '',
+      monto_total: cuenta.monto_total || 0,
+      fecha_emision: cuenta.fecha_emision || hoyStr(),
+      fecha_vencimiento: cuenta.fecha_vencimiento || '',
+      comentario: cuenta.comentario || '',
+    })
+    setMontoNueva(formatearMonto(cuenta.monto_total || 0))
+    setEnCuotas(false)
+    setCuotasProgramadas([])
+    setEditCuentaId(cuenta.id)
+    setShowNueva(true)
+  }
+
+  const handleEliminarCuenta = async (cuenta) => {
+    if ((cuenta.monto_pagado || 0) > 0) {
+      showToast('No se puede eliminar una cuenta con pagos registrados. Anúlala en su lugar.', 'error')
+      return
+    }
+    if (!confirm(`¿Eliminar la cuenta N°${cuenta.numero} — ${cuenta.concepto}? Esta acción no se puede deshacer.`)) return
+    await supabase.from('respaldos_cuenta').delete().eq('cuenta_id', cuenta.id)
+    const { error } = await supabase.from('cuentas_por_pagar').delete().eq('id', cuenta.id)
+    if (error) { showToast('Error al eliminar: ' + error.message, 'error'); return }
+    showToast('Cuenta eliminada')
+    loadAll()
   }
 
   const handleGuardarCuenta = async () => {
@@ -160,6 +193,30 @@ export default function CuentasPorPagar() {
     if (total <= 0) { showToast('El monto debe ser mayor a 0', 'error'); return }
 
     setSavingNueva(true)
+
+    if (editCuentaId) {
+      const cuentaActual = cuentas.find(c => c.id === editCuentaId)
+      const tienePagos = (cuentaActual?.monto_pagado || 0) > 0
+      const payload = {
+        proveedor_id: formNueva.proveedor_id,
+        concepto: formNueva.concepto.trim(),
+        categoria: formNueva.categoria || null,
+        descripcion: formNueva.descripcion || null,
+        fecha_emision: formNueva.fecha_emision,
+        fecha_vencimiento: formNueva.fecha_vencimiento || null,
+        comentario: formNueva.comentario || null,
+      }
+      if (!tienePagos) payload.monto_total = total
+      const { error: eUpd } = await supabase.from('cuentas_por_pagar').update(payload).eq('id', editCuentaId)
+      setSavingNueva(false)
+      if (eUpd) { showToast('Error al actualizar: ' + eUpd.message, 'error'); return }
+      setShowNueva(false)
+      setEditCuentaId(null)
+      showToast('Cuenta actualizada')
+      loadAll()
+      return
+    }
+
     const { data: cuenta, error } = await supabase.from('cuentas_por_pagar').insert({
       proveedor_id: formNueva.proveedor_id,
       concepto: formNueva.concepto.trim(),
@@ -578,6 +635,11 @@ export default function CuentasPorPagar() {
                                 <div style={{ width: `${progreso}%`, height: '100%', borderRadius: 3, background: c.estado === 'pagada' ? '#5dcaa5' : c.estado === 'parcial' ? '#fac775' : '#f09595', transition: 'width 0.3s' }}></div>
                               </div>
                               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                {editable && (
+                                  <button className="btn btn-sm" onClick={() => abrirEditarCuenta(c)} title="Editar">
+                                    <i className="ti ti-edit"></i> Editar
+                                  </button>
+                                )}
                                 {editable && c.estado !== 'pagada' && c.estado !== 'anulada' && (
                                   <>
                                     <button className="btn btn-sm btn-primary" onClick={() => abrirPago(c)}>
@@ -591,6 +653,11 @@ export default function CuentasPorPagar() {
                                 {editable && c.estado !== 'anulada' && (
                                   <button className="btn btn-sm btn-danger" onClick={() => handleAnular(c)}>
                                     <i className="ti ti-ban"></i> Anular
+                                  </button>
+                                )}
+                                {editable && (
+                                  <button className="btn btn-sm btn-danger" onClick={() => handleEliminarCuenta(c)} title="Eliminar cuenta">
+                                    <i className="ti ti-trash"></i> Eliminar
                                   </button>
                                 )}
                               </div>
@@ -682,7 +749,7 @@ export default function CuentasPorPagar() {
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowNueva(false)}>
           <div className="modal" style={{ width: 680, maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-header">
-              <div className="modal-title">Nueva cuenta por pagar</div>
+              <div className="modal-title">{editCuentaId ? 'Editar cuenta por pagar' : 'Nueva cuenta por pagar'}</div>
               <button className="btn btn-sm" onClick={() => setShowNueva(false)}><i className="ti ti-x"></i></button>
             </div>
             <div className="form-grid">
@@ -704,13 +771,24 @@ export default function CuentasPorPagar() {
               <div className="form-group full"><label>Descripción</label>
                 <textarea rows={2} value={formNueva.descripcion} onChange={e => setFormNueva(f => ({ ...f, descripcion: e.target.value }))} style={{ resize: 'vertical', fontFamily: 'inherit', fontSize: 13 }} />
               </div>
-              <div className="form-group"><label>Monto total ($) *</label>
-                <input type="text" inputMode="numeric" value={montoNueva}
-                  onChange={e => onChangeMontoNueva(e.target.value)}
-                  onBlur={() => { const n = parsearMonto(montoNueva); if (n > 0) setMontoNueva(formatearMonto(n)) }}
-                  onFocus={() => { const n = parsearMonto(montoNueva); if (n > 0) setMontoNueva(String(n)) }}
-                  placeholder="150.000" />
-              </div>
+              {(() => {
+                const cuentaEdit = editCuentaId ? cuentas.find(c => c.id === editCuentaId) : null
+                const bloqueado = !!(cuentaEdit && (cuentaEdit.monto_pagado || 0) > 0)
+                return (
+                  <div className="form-group"><label>Monto total ($) *</label>
+                    <input type="text" inputMode="numeric" value={montoNueva}
+                      onChange={e => onChangeMontoNueva(e.target.value)}
+                      onBlur={() => { const n = parsearMonto(montoNueva); if (n > 0) setMontoNueva(formatearMonto(n)) }}
+                      onFocus={() => { const n = parsearMonto(montoNueva); if (n > 0) setMontoNueva(String(n)) }}
+                      placeholder="150.000" disabled={bloqueado} />
+                    {bloqueado && (
+                      <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 4, fontFamily: 'sans-serif' }}>
+                        No se puede modificar el monto de una cuenta con pagos registrados
+                      </div>
+                    )}
+                  </div>
+                )
+              })()}
               <div className="form-group"><label>Fecha emisión</label>
                 <input type="date" value={formNueva.fecha_emision} onChange={e => {
                   const v = e.target.value
@@ -725,13 +803,13 @@ export default function CuentasPorPagar() {
                 <input value={formNueva.comentario} onChange={e => setFormNueva(f => ({ ...f, comentario: e.target.value }))} />
               </div>
 
-              <div className="form-group full" style={{ borderTop: '0.5px solid var(--border)', paddingTop: 10 }}>
+              {!editCuentaId && (<div className="form-group full" style={{ borderTop: '0.5px solid var(--border)', paddingTop: 10 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
                   <input type="checkbox" checked={enCuotas} onChange={e => onToggleCuotas(e.target.checked)} style={{ accentColor: 'var(--gold)' }} />
                   ¿Pagar en cuotas?
                 </label>
-              </div>
-              {enCuotas && (
+              </div>)}
+              {!editCuentaId && enCuotas && (
                 <>
                   <div className="form-group"><label>N° de cuotas</label>
                     <input type="number" min="1" max="24" value={nCuotas} onChange={e => onChangeNCuotas(e.target.value)} />
@@ -761,7 +839,7 @@ export default function CuentasPorPagar() {
             <div className="modal-footer">
               <button className="btn" onClick={() => setShowNueva(false)}>Cancelar</button>
               <button className="btn btn-primary" onClick={handleGuardarCuenta} disabled={savingNueva}>
-                {savingNueva ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-check"></i> Crear cuenta</>}
+                {savingNueva ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-check"></i> {editCuentaId ? 'Guardar cambios' : 'Crear cuenta'}</>}
               </button>
             </div>
           </div>
