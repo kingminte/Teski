@@ -89,6 +89,43 @@ export default function Layout({ children }) {
 
   const handleLogout = () => { logout(); window.location.href = '/' }
 
+  const [esMovil, setEsMovil] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
+  const [menuAbierto, setMenuAbierto] = useState(() => {
+    if (typeof window === 'undefined') return true
+    if (window.innerWidth < 768) return false
+    const saved = localStorage.getItem('teski_menu_abierto')
+    return saved === null ? true : saved === 'true'
+  })
+
+  useEffect(() => {
+    const onResize = () => {
+      const mob = window.innerWidth < 768
+      setEsMovil(prev => {
+        if (prev !== mob) {
+          if (mob) setMenuAbierto(false)
+          else {
+            const saved = localStorage.getItem('teski_menu_abierto')
+            setMenuAbierto(saved === null ? true : saved === 'true')
+          }
+        }
+        return mob
+      })
+    }
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const toggleMenu = () => {
+    const nuevo = !menuAbierto
+    setMenuAbierto(nuevo)
+    if (!esMovil) localStorage.setItem('teski_menu_abierto', String(nuevo))
+  }
+
+  const irA = (path) => {
+    navigate(path)
+    if (esMovil) setMenuAbierto(false)
+  }
+
   const [, setTick] = useState(0)
   useEffect(() => {
     const t = setInterval(() => setTick(x => x + 1), 60000)
@@ -119,26 +156,61 @@ export default function Layout({ children }) {
 
   const rolMeta = ROL_META[user?.rol] || ROL_META.admin
 
+  const mostrarFull = esMovil ? menuAbierto : menuAbierto
+  const labelsVisibles = esMovil ? menuAbierto : menuAbierto
+  const anchoSidebar = esMovil ? 240 : (menuAbierto ? 220 : 60)
+  const marginMain = esMovil ? 0 : (menuAbierto ? 220 : 60)
+
   return (
     <div style={{ display:'flex', minHeight:'100vh' }}>
-      <div style={{ width:220, background:'#0d1e38', borderRight:'0.5px solid var(--border)', display:'flex', flexDirection:'column', position:'fixed', top:0, left:0, bottom:0, zIndex:10 }}>
-        <div style={{ padding:'1.25rem 1rem 1rem', borderBottom:'0.5px solid var(--border)' }}>
-          <img src={logo} alt="Teski Club" style={{ width:'100%', maxWidth:170, display:'block', marginBottom:8, filter:'brightness(1.1)' }} />
-          <div style={{ fontSize:11, color:'var(--text-dim)', letterSpacing:2, fontFamily:'sans-serif', textTransform:'uppercase' }}>Sistema de Socios</div>
+      {/* Overlay para móvil */}
+      {esMovil && menuAbierto && (
+        <div onClick={() => setMenuAbierto(false)} style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.5)', zIndex: 90,
+        }} />
+      )}
+
+      {/* Sidebar */}
+      <aside style={{
+        width: anchoSidebar,
+        background:'#0d1e38',
+        borderRight:'0.5px solid var(--border)',
+        display:'flex', flexDirection:'column',
+        position:'fixed', top:0, left:0, bottom:0,
+        zIndex: esMovil ? 100 : 10,
+        transform: esMovil && !menuAbierto ? 'translateX(-100%)' : 'translateX(0)',
+        transition: 'transform 0.3s ease, width 0.3s ease',
+        overflowX: 'hidden',
+      }}>
+        <div style={{ padding: labelsVisibles ? '1.25rem 1rem 1rem' : '1rem 0.5rem', borderBottom:'0.5px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: labelsVisibles ? 'flex-start' : 'center' }}>
+          {labelsVisibles ? (
+            <div style={{ flex: 1 }}>
+              <img src={logo} alt="Teski Club" style={{ width:'100%', maxWidth:170, display:'block', marginBottom:8, filter:'brightness(1.1)' }} />
+              <div style={{ fontSize:11, color:'var(--text-dim)', letterSpacing:2, fontFamily:'sans-serif', textTransform:'uppercase' }}>Sistema de Socios</div>
+            </div>
+          ) : (
+            <i className="ti ti-mountain" style={{ fontSize: 24, color: 'var(--gold)' }} title="Teski Club"></i>
+          )}
         </div>
 
-        <nav style={{ flex:1, padding:'0.75rem 0', overflowY:'auto' }}>
+        <nav style={{ flex:1, padding:'0.75rem 0', overflowY:'auto', overflowX: 'hidden' }}>
           {navFiltrado.map((item, i) => {
-            if (item.section) return (
-              <div key={i} style={{ padding:'0.4rem 1rem 0.2rem', fontSize:10, color:'var(--text-dim)', letterSpacing:2, textTransform:'uppercase', fontFamily:'sans-serif', marginTop: i > 0 ? '0.4rem' : 0 }}>
-                {item.section}
-              </div>
-            )
+            if (item.section) {
+              if (!labelsVisibles) return null
+              return (
+                <div key={i} style={{ padding:'0.4rem 1rem 0.2rem', fontSize:10, color:'var(--text-dim)', letterSpacing:2, textTransform:'uppercase', fontFamily:'sans-serif', marginTop: i > 0 ? '0.4rem' : 0 }}>
+                  {item.section}
+                </div>
+              )
+            }
             const active = pathname.startsWith(item.path)
             return (
-              <div key={item.path} onClick={() => navigate(item.path)} style={{
+              <div key={item.path} onClick={() => irA(item.path)} title={!labelsVisibles ? item.label : undefined} style={{
                 display:'flex', alignItems:'center', gap:10,
-                padding:'0.55rem 1.25rem', fontSize:13, fontFamily:'sans-serif',
+                padding: labelsVisibles ? '0.55rem 1.25rem' : '0.65rem 0',
+                justifyContent: labelsVisibles ? 'flex-start' : 'center',
+                fontSize:13, fontFamily:'sans-serif',
                 color: active ? 'var(--gold)' : 'var(--text-muted)',
                 cursor:'pointer',
                 borderLeft:`2px solid ${active ? 'var(--gold)' : 'transparent'}`,
@@ -146,48 +218,70 @@ export default function Layout({ children }) {
                 transition:'all 0.15s',
               }}>
                 <i className={`ti ${item.icon}`} style={{ fontSize:16 }}></i>
-                {item.label}
+                {labelsVisibles && <span>{item.label}</span>}
               </div>
             )
           })}
         </nav>
 
-        <div style={{ padding:'1rem 1.25rem', borderTop:'0.5px solid var(--border)' }}>
-          {user && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-              <div style={{ width: 34, height: 34, borderRadius: '50%', background: rolMeta.background, color: rolMeta.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
-                {iniciales(user.nombre)}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: '#c8d0dc', fontFamily: 'sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.nombre}</div>
-                <div style={{ fontSize: 10, color: rolMeta.color, fontFamily: 'sans-serif', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  <i className={`ti ${rolMeta.icon}`} style={{ fontSize: 11 }}></i> {rolMeta.label}
+        <div style={{ padding: labelsVisibles ? '1rem 1.25rem' : '0.75rem 0.5rem', borderTop:'0.5px solid var(--border)' }}>
+          {user && labelsVisibles && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: '50%', background: rolMeta.background, color: rolMeta.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>
+                  {iniciales(user.nombre)}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, color: '#c8d0dc', fontFamily: 'sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.nombre}</div>
+                  <div style={{ fontSize: 10, color: rolMeta.color, fontFamily: 'sans-serif', display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <i className={`ti ${rolMeta.icon}`} style={{ fontSize: 11 }}></i> {rolMeta.label}
+                  </div>
                 </div>
               </div>
-            </div>
+              <div style={{ fontSize: 11, color:'var(--text-dim)', fontFamily:'sans-serif', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || user?.username || ''}</div>
+              {restanteMs != null && (
+                <div style={{ fontSize: 10, color:'var(--text-dim)', fontFamily:'sans-serif', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <i className="ti ti-clock" style={{ fontSize: 11 }}></i> Sesión: {formatRestante(restanteMs)}
+                </div>
+              )}
+              <button className="btn btn-sm btn-danger" onClick={handleLogout} style={{ width:'100%', justifyContent:'center' }}>
+                <i className="ti ti-logout"></i> Cerrar sesión
+              </button>
+            </>
           )}
-          <div style={{ fontSize: 11, color:'var(--text-dim)', fontFamily:'sans-serif', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || user?.username || ''}</div>
-          {restanteMs != null && (
-            <div style={{ fontSize: 10, color:'var(--text-dim)', fontFamily:'sans-serif', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <i className="ti ti-clock" style={{ fontSize: 11 }}></i> Sesión: {formatRestante(restanteMs)}
-            </div>
+          {user && !labelsVisibles && (
+            <>
+              <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 8 }} title={`${user.nombre} · ${rolMeta.label}`}>
+                <div style={{ width: 34, height: 34, borderRadius: '50%', background: rolMeta.background, color: rolMeta.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold' }}>
+                  {iniciales(user.nombre)}
+                </div>
+              </div>
+              <button className="btn btn-sm btn-danger" onClick={handleLogout} style={{ width:'100%', justifyContent:'center', padding: '6px 0' }} title="Cerrar sesión">
+                <i className="ti ti-logout"></i>
+              </button>
+            </>
           )}
-          <button className="btn btn-sm btn-danger" onClick={handleLogout} style={{ width:'100%', justifyContent:'center' }}>
-            <i className="ti ti-logout"></i> Cerrar sesión
-          </button>
         </div>
-      </div>
+      </aside>
 
-      <div style={{ marginLeft:220, flex:1, display:'flex', flexDirection:'column' }}>
-        <div style={{ background:'#0d1e38', borderBottom:'0.5px solid var(--border)', padding:'0 2rem', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:5 }}>
-          <div style={{ fontSize:16, color:'var(--gold-light)', letterSpacing:0.5 }}>{title}</div>
+      <div style={{ marginLeft: marginMain, flex:1, display:'flex', flexDirection:'column', transition: 'margin-left 0.3s ease', minWidth: 0 }}>
+        <div style={{ background:'#0d1e38', borderBottom:'0.5px solid var(--border)', padding:'0 1rem 0 0.5rem', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:5, gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <button onClick={toggleMenu} style={{
+              background: 'none', border: 'none', color: 'var(--gold)', cursor: 'pointer', fontSize: 22, padding: '4px 8px',
+              display: 'flex', alignItems: 'center',
+            }} title={menuAbierto ? 'Colapsar menú' : 'Abrir menú'}>
+              <i className={`ti ${menuAbierto ? 'ti-x' : 'ti-menu-2'}`}></i>
+            </button>
+            <div style={{ fontSize:16, color:'var(--gold-light)', letterSpacing:0.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
+          </div>
           {puedeEditar('socios') && (
-            <button className="btn btn-primary btn-sm" onClick={() => navigate('/socios')}>
-              <i className="ti ti-user-plus"></i> Nuevo socio
+            <button className="btn btn-primary btn-sm" onClick={() => navigate('/socios')} style={{ flexShrink: 0 }}>
+              <i className="ti ti-user-plus"></i> {esMovil ? '' : 'Nuevo socio'}
             </button>
           )}
         </div>
-        <div style={{ padding:'2rem', flex:1 }}>
+        <div style={{ padding: esMovil ? '1rem' : '2rem', flex:1 }}>
           {children}
         </div>
       </div>
