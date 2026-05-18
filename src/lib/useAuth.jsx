@@ -3,6 +3,18 @@ import { supabase } from './supabase'
 
 const AuthContext = createContext(null)
 
+export const DURACION_SESION = 8 * 60 * 60 * 1000 // 8 horas
+
+export function isSesionExpirada(user) {
+  if (!user?.loginTimestamp) return false
+  return Date.now() - user.loginTimestamp > DURACION_SESION
+}
+
+export function tiempoRestanteSesion(user) {
+  if (!user?.loginTimestamp) return null
+  return Math.max(0, DURACION_SESION - (Date.now() - user.loginTimestamp))
+}
+
 // Orden de prioridad para decidir landing tras login
 const SECCION_A_RUTA = [
   ['dashboard', '/dashboard'],
@@ -38,7 +50,13 @@ export async function hashPassword(pass) {
 export function loadUserFromStorage() {
   try {
     const raw = localStorage.getItem('teski_user')
-    return raw ? JSON.parse(raw) : null
+    if (!raw) return null
+    const u = JSON.parse(raw)
+    if (isSesionExpirada(u)) {
+      localStorage.removeItem('teski_user')
+      return null
+    }
+    return u
   } catch {
     return null
   }
@@ -72,15 +90,16 @@ export function AuthProvider({ children, user: userProp, onUserChange }) {
     if (error) throw new Error('Error al conectar con el servidor')
     if (!data) throw new Error('Usuario o contraseña incorrectos')
     await supabase.from('usuarios').update({ ultimo_acceso: new Date().toISOString() }).eq('id', data.id)
-    localStorage.setItem('teski_user', JSON.stringify(data))
-    onUserChange?.(data)
+    const sessionData = { ...data, loginTimestamp: Date.now() }
+    localStorage.setItem('teski_user', JSON.stringify(sessionData))
+    onUserChange?.(sessionData)
 
     const { data: perms } = await supabase.from('permisos_rol').select('seccion,nivel').eq('rol', data.rol)
     const permisosMap = {}
     ;(perms || []).forEach(p => { permisosMap[p.seccion] = p.nivel })
     const rutaInicial = calcularRutaInicial(data.rol, permisosMap)
 
-    return { debe_cambiar_clave: !!data.debe_cambiar_clave, user: data, rutaInicial }
+    return { debe_cambiar_clave: !!sessionData.debe_cambiar_clave, user: sessionData, rutaInicial }
   }
 
   const logout = () => {

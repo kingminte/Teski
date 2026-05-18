@@ -8,6 +8,7 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const sesionExpirada = new URLSearchParams(window.location.search).get('expired') === 'true'
 
   const handleLogin = async (e) => {
     e.preventDefault()
@@ -32,6 +33,13 @@ export default function Login() {
           <img src={logo} alt="Teski Club" style={{ width: 180, display: 'block', margin: '0 auto 1rem', filter: 'brightness(1.1)' }} />
           <div style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginTop: 4, letterSpacing: 1 }}>SISTEMA DE SOCIOS</div>
         </div>
+
+        {sesionExpirada && (
+          <div style={{ background: 'rgba(239,159,39,0.1)', border: '0.5px solid rgba(239,159,39,0.3)', borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: 12, color: '#fac775', display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'sans-serif' }}>
+            <i className="ti ti-clock" style={{ fontSize: 16 }}></i>
+            Tu sesión expiró. Por favor inicia sesión nuevamente.
+          </div>
+        )}
 
         <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div className="form-group">

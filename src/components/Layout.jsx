@@ -1,5 +1,6 @@
+import { useEffect, useState } from 'react'
 import { useNavigate, useLocation, Navigate } from 'react-router-dom'
-import { useAuth } from '../lib/useAuth'
+import { useAuth, tiempoRestanteSesion } from '../lib/useAuth'
 import logo from '../assets/logo.png'
 
 const PATH_SECCION = {
@@ -88,6 +89,19 @@ export default function Layout({ children }) {
 
   const handleLogout = () => { logout(); window.location.href = '/' }
 
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setTick(x => x + 1), 60000)
+    return () => clearInterval(t)
+  }, [])
+  const restanteMs = user ? tiempoRestanteSesion(user) : null
+  const formatRestante = (ms) => {
+    if (ms == null) return ''
+    const h = Math.floor(ms / 3600000)
+    const m = Math.floor((ms % 3600000) / 60000)
+    return `${h}h ${m}m`
+  }
+
   const title = Object.entries(PAGE_TITLES).find(([k]) => pathname.startsWith(k))?.[1] || 'Teski Club'
 
   // Filtrar NAV según permisos y eliminar headers de sección huérfanos
@@ -152,7 +166,12 @@ export default function Layout({ children }) {
               </div>
             </div>
           )}
-          <div style={{ fontSize: 11, color:'var(--text-dim)', fontFamily:'sans-serif', marginBottom: 8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || user?.username || ''}</div>
+          <div style={{ fontSize: 11, color:'var(--text-dim)', fontFamily:'sans-serif', marginBottom: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user?.email || user?.username || ''}</div>
+          {restanteMs != null && (
+            <div style={{ fontSize: 10, color:'var(--text-dim)', fontFamily:'sans-serif', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <i className="ti ti-clock" style={{ fontSize: 11 }}></i> Sesión: {formatRestante(restanteMs)}
+            </div>
+          )}
           <button className="btn btn-sm btn-danger" onClick={handleLogout} style={{ width:'100%', justifyContent:'center' }}>
             <i className="ti ti-logout"></i> Cerrar sesión
           </button>

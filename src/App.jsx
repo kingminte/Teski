@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { AuthProvider, loadUserFromStorage } from './lib/useAuth'
+import { AuthProvider, loadUserFromStorage, isSesionExpirada } from './lib/useAuth'
 import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -30,6 +30,21 @@ export default function App() {
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
   }, [])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const u = loadUserFromStorage()
+      if (!u && user) {
+        // Sesión expirada — limpiar y redirigir
+        localStorage.removeItem('teski_user')
+        setUser(null)
+        if (window.location.pathname !== '/' && !window.location.search.includes('expired')) {
+          window.location.href = '/?expired=true'
+        }
+      }
+    }, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [user])
 
   if (!user) {
     return (
