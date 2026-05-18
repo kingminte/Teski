@@ -96,7 +96,8 @@ export default function Reporteria() {
     const movsSocio = movimientos.filter(m => m.socio_id === socio.id)
     const incSocio = incorporaciones.filter(i => i.socio_id === socio.id)
     const periodoActual = periodos[0]
-    const pagadoActual = pagosSocio.filter(p => p.periodo_id === periodoActual?.id).reduce((t,p) => t + p.monto, 0)
+    const esCuota = (p) => !p.concepto || !p.concepto.toLowerCase().includes('incorpora')
+    const pagadoActual = pagosSocio.filter(p => p.periodo_id === periodoActual?.id && esCuota(p)).reduce((t,p) => t + p.monto, 0)
     const pct = periodoActual?.monto > 0 ? Math.round((pagadoActual / periodoActual.monto) * 100) : 0
     return { pagosSocio, totalPagado, benesSocio, chequesSocio, movsSocio, incSocio, pagadoActual, pct, periodoActual }
   }
@@ -565,7 +566,7 @@ export default function Reporteria() {
       for (const p of periodos) {
         if (anioIngreso && p.anio < anioIngreso) { aniosData[p.anio] = { pagado: null, pendiente: null }; continue }
         if (s.estado === 'inactivo' && anioInactividad && anioInactividad < p.anio) { aniosData[p.anio] = { pagado: null, pendiente: null }; continue }
-        const pagosP = pagos.filter(pg => pg.socio_id === s.id && pg.periodo_id === p.id)
+        const pagosP = pagos.filter(pg => pg.socio_id === s.id && pg.periodo_id === p.id && (!pg.concepto || !pg.concepto.toLowerCase().includes('incorpora')))
         const pagado = pagosP.reduce((t, pg) => t + pg.monto, 0)
         const pendiente = Math.max(0, p.monto - pagado)
         aniosData[p.anio] = { pagado, pendiente, cuota: p.monto }

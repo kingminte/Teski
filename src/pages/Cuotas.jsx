@@ -100,13 +100,15 @@ export default function Cuotas() {
     q.then(({ data }) => setPagosTodos(data || []))
   }, [esSocio, miSocioId, pagos])
 
+  const esPagoCuota = (p) => !p.concepto || !p.concepto.toLowerCase().includes('incorpora')
+
   const calcularDeudaConsolidada = (socioId) => {
     const socio = socios.find(s => s.id === socioId)
     const anioIngreso = socio?.fecha_ingreso ? parseInt(socio.fecha_ingreso.slice(0, 4)) : null
     const rows = []
     for (const p of periodos) {
       if (anioIngreso && p.anio < anioIngreso) continue
-      const pagosPer = pagosTodos.filter(pg => pg.socio_id === socioId && pg.periodo_id === p.id)
+      const pagosPer = pagosTodos.filter(pg => pg.socio_id === socioId && pg.periodo_id === p.id && esPagoCuota(pg))
       const totalPagado = pagosPer.reduce((t, pg) => t + pg.monto, 0)
       const pendiente = Math.max(0, p.monto - totalPagado)
       rows.push({
@@ -147,7 +149,8 @@ export default function Cuotas() {
 
   const pagosPorSocio = socios.reduce((acc, s) => {
     const sp = pagos.filter(p => p.socio_id === s.id)
-    const total = sp.reduce((t, p) => t + p.monto, 0)
+    // total cuenta solo cuota social (excluye incorporación) para comparar contra montoAnual
+    const total = sp.filter(esPagoCuota).reduce((t, p) => t + p.monto, 0)
     acc[s.id] = { pagos: sp, total }
     return acc
   }, {})

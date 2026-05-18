@@ -85,7 +85,7 @@ export default function Dashboard() {
     // Pagos del período para esos socios
     const { data: pagos } = await supabase
       .from('pagos_cuota')
-      .select('socio_id, monto')
+      .select('socio_id, monto, concepto')
       .eq('periodo_id', periodo.id)
       .in('socio_id', socioIds.length > 0 ? socioIds : ['no-match'])
 
@@ -104,23 +104,26 @@ export default function Dashboard() {
       .eq('estado', 'por_depositar')
 
     // Calcular stats
-    const pagosPorSocio = {}
+    // Estados (alDia/parcial/sinPago) se basan SOLO en cuota social (excluye incorporación)
+    const esCuota = (p) => !p.concepto || !p.concepto.toLowerCase().includes('incorpora')
+    const pagosPorSocioCuota = {}
     ;(pagos || []).forEach(p => {
-      pagosPorSocio[p.socio_id] = (pagosPorSocio[p.socio_id] || 0) + p.monto
+      if (esCuota(p)) pagosPorSocioCuota[p.socio_id] = (pagosPorSocioCuota[p.socio_id] || 0) + p.monto
     })
 
     const total = sociosDelAnio.length
-    const alDia = sociosDelAnio.filter(s => (pagosPorSocio[s.id] || 0) >= periodo.monto).length
-    const conPagoParcial = sociosDelAnio.filter(s => (pagosPorSocio[s.id] || 0) > 0 && (pagosPorSocio[s.id] || 0) < periodo.monto).length
-    const sinPago = sociosDelAnio.filter(s => (pagosPorSocio[s.id] || 0) === 0).length
-    const recaudado = Object.values(pagosPorSocio).reduce((t, m) => t + m, 0)
+    const alDia = sociosDelAnio.filter(s => (pagosPorSocioCuota[s.id] || 0) >= periodo.monto).length
+    const conPagoParcial = sociosDelAnio.filter(s => (pagosPorSocioCuota[s.id] || 0) > 0 && (pagosPorSocioCuota[s.id] || 0) < periodo.monto).length
+    const sinPago = sociosDelAnio.filter(s => (pagosPorSocioCuota[s.id] || 0) === 0).length
+    // Recaudado total: incluye todos los conceptos (cuota + incorporación)
+    const recaudado = (pagos || []).reduce((t, p) => t + p.monto, 0)
 
     // Vencidas: $0 pagado y más de 60 días desde el 1-ene del año del período
     const inicioPeriodo = new Date(`${anio}-01-01`)
     const hoy = new Date()
     const diasDesdeInicio = Math.floor((hoy - inicioPeriodo) / 86400000)
     const vencidas = diasDesdeInicio > 60
-      ? sociosDelAnio.filter(s => (pagosPorSocio[s.id] || 0) === 0).length
+      ? sociosDelAnio.filter(s => (pagosPorSocioCuota[s.id] || 0) === 0).length
       : 0
 
     const chequesCount = (chequesData || []).length
