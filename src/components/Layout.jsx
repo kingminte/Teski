@@ -78,17 +78,6 @@ export default function Layout({ children }) {
   const { pathname } = useLocation()
   const { user, permisos, tieneAcceso, puedeEditar, logout, primeraRutaPermitida } = useAuth()
 
-  // Si el usuario está en una ruta sin permiso, redirigir a su primera ruta permitida.
-  // Esperar a que `permisos` esté cargado (objeto no vacío) para usuarios no-admin.
-  const seccionActual = PATH_SECCION[pathname]
-  const permisosListos = user?.rol === 'admin' || Object.keys(permisos).length > 0
-  if (user && permisosListos && seccionActual && !tieneAcceso(seccionActual)) {
-    const destino = primeraRutaPermitida()
-    if (destino && destino !== pathname) return <Navigate to={destino} replace />
-  }
-
-  const handleLogout = () => { logout(); window.location.href = '/' }
-
   const [esMovil, setEsMovil] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768)
   const [menuAbierto, setMenuAbierto] = useState(() => {
     if (typeof window === 'undefined') return true
@@ -115,6 +104,22 @@ export default function Layout({ children }) {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => setTick(x => x + 1), 60000)
+    return () => clearInterval(t)
+  }, [])
+
+  // Early returns DESPUÉS de todos los hooks (regla de hooks).
+  const seccionActual = PATH_SECCION[pathname]
+  const permisosListos = user?.rol === 'admin' || Object.keys(permisos).length > 0
+  if (user && permisosListos && seccionActual && !tieneAcceso(seccionActual)) {
+    const destino = primeraRutaPermitida()
+    if (destino && destino !== pathname) return <Navigate to={destino} replace />
+  }
+
+  const handleLogout = () => { logout(); window.location.href = '/' }
+
   const toggleMenu = () => {
     const nuevo = !menuAbierto
     setMenuAbierto(nuevo)
@@ -126,11 +131,6 @@ export default function Layout({ children }) {
     if (esMovil) setMenuAbierto(false)
   }
 
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    const t = setInterval(() => setTick(x => x + 1), 60000)
-    return () => clearInterval(t)
-  }, [])
   const restanteMs = user ? tiempoRestanteSesion(user) : null
   const formatRestante = (ms) => {
     if (ms == null) return ''
