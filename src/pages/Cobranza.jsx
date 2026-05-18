@@ -29,12 +29,12 @@ function generarReferencia(socio, anio) {
 
 const TEMPLATE_DEFAULT = `Estimado/a {nombre},
 
-Te recordamos que aún tienes pendiente el pago de la cuota social {anio} del Teski Club.
+Te recordamos que tienes cuotas sociales pendientes con el Teski Club.
 
-Resumen de tu cuenta:
-• Cuota anual {anio}: {monto_cuota}
-• Pagado a la fecha: {monto_pagado}
-• Saldo pendiente: {monto_pendiente}
+Resumen de tu deuda:
+{detalle_deuda}
+
+Deuda total: {monto_pendiente}
 
 {datos_bancarios}
 
@@ -94,7 +94,7 @@ export default function Cobranza() {
   const [loading, setLoading] = useState(true)
 
   // UI
-  const [filtro, setFiltro] = useState('pendientes') // pendientes | sin_pago | parcial | todos
+  const [filtro, setFiltro] = useState('todos_deudores') // todos_deudores | solo_actual | historica
   const [busqueda, setBusqueda] = useState('')
   const [previewSocio, setPreviewSocio] = useState(null)
   const [asunto, setAsunto] = useState('')
@@ -122,36 +122,22 @@ export default function Cobranza() {
     loadEnvios()
   }, [])
 
-  // Socios filtrados por año del período
+  // Socios (todos los activos o con deuda historica)
   useEffect(() => {
-    if (!selectedPeriodo) return
-    const anio = selectedPeriodo.anio
     supabase
       .from('socios')
       .select('id,nombre,apellido,numero_socio,email,fecha_ingreso,fecha_inactividad,estado')
-      .lte('fecha_ingreso', `${anio}-12-31`)
       .order('numero_socio')
-      .then(({ data }) => {
-        const filtrados = (data || []).filter(s => {
-          if (s.estado === 'inactivo' && s.fecha_inactividad) {
-            const anioInactividad = parseInt(s.fecha_inactividad.slice(0, 4))
-            if (anioInactividad < anio) return false
-          }
-          return true
-        })
-        setSocios(filtrados)
-      })
-  }, [selectedPeriodo])
+      .then(({ data }) => setSocios(data || []))
+  }, [])
 
-  // Pagos del período
+  // TODOS los pagos (todos los períodos)
   useEffect(() => {
-    if (!selectedPeriodo) return
     supabase
       .from('pagos_cuota')
-      .select('socio_id,monto')
-      .eq('periodo_id', selectedPeriodo.id)
+      .select('socio_id,periodo_id,monto,fecha_pago')
       .then(({ data }) => setPagos(data || []))
-  }, [selectedPeriodo])
+  }, [])
 
   const loadEnvios = async () => {
     const { data } = await supabase
@@ -166,50 +152,82 @@ export default function Cobranza() {
   const montoCuota = selectedPeriodo?.monto || 0
   const anio = selectedPeriodo?.anio || new Date().getFullYear()
 
-  const pagosPorSocio = useMemo(() => {
-    const m = {}
-    pagos.forEach(p => { m[p.socio_id] = (m[p.socio_id] || 0) + p.monto })
-    return m
-  }, [pagos])
+  const calcularDeudaTotal = (s) => {
+    const anioIngreso = s.fecha_ingreso ? parseInt(s.fecha_ingreso.slice(0, 4)) : null
+    const anioInactividad = s.fecha_inactividad ? parseInt(s.fecha_inactividad.slice(0, 4)) : null
+    let deudaTotal = 0
+    let deudaPeriodoActual = 0
+    let deudaHistorica = 0
+    const aniosDeuda = []
+    for (const p of periodos) {
+      if (anioIngreso && p.anio < anioIngreso) continue
+      if (s.estado === 'inactivo' && anioInactividad && anioInactividad < p.anio) continue
+      const pagosP = pagos.filter(pg => pg.socio_id === s.id && pg.periodo_id === p.id)
+      const totalPagado = pagosP.reduce((t, pg) => t + pg.monto, 0)
+      const pendiente = Math.max(0, p.monto - totalPagado)
+      if (pendiente > 0) {
+        deudaTotal += pendiente
+        aniosDeuda.push({ anio: p.anio, pendiente, cuota: p.monto, pagado: totalPagado })
+        if (selectedPeriodo && p.id === selectedPeriodo.id) deudaPeriodoActual += pendiente
+        else if (selectedPeriodo && p.anio < selectedPeriodo.anio) deudaHistorica += pendiente
+      }
+    }
+    aniosDeuda.sort((a, b) => a.anio - b.anio)
+    const ultimoPago = pagos
+      .filter(pg => pg.socio_id === s.id && pg.fecha_pago)
+      .sort((a, b) => b.fecha_pago.localeCompare(a.fecha_pago))[0]
+    return { deudaTotal, aniosDeuda, deudaPeriodoActual, deudaHistorica, ultimoPago: ultimoPago?.fecha_pago || null }
+  }
 
   const sociosConEstado = useMemo(() => socios.map(s => {
-    const pagado = pagosPorSocio[s.id] || 0
-    const pendiente = Math.max(0, montoCuota - pagado)
-    let estado = 'al_dia'
-    if (pagado === 0) estado = 'sin_pago'
-    else if (pagado < montoCuota) estado = 'parcial'
-    return { ...s, pagado, pendiente, estado, referencia: generarReferencia(s, anio) }
-  }), [socios, pagosPorSocio, montoCuota, anio])
+    const { deudaTotal, aniosDeuda, deudaPeriodoActual, deudaHistorica, ultimoPago } = calcularDeudaTotal(s)
+    return {
+      ...s,
+      deudaTotal,
+      aniosDeuda,
+      deudaPeriodoActual,
+      deudaHistorica,
+      ultimoPago,
+      tieneDeuda: deudaTotal > 0,
+      referencia: generarReferencia(s, anio),
+    }
+  }), [socios, pagos, periodos, selectedPeriodo, anio])
 
   const sociosFiltrados = useMemo(() => {
     const q = busqueda.toLowerCase().trim()
     return sociosConEstado.filter(s => {
-      if (filtro === 'pendientes' && s.estado === 'al_dia') return false
-      if (filtro === 'sin_pago' && s.estado !== 'sin_pago') return false
-      if (filtro === 'parcial' && s.estado !== 'parcial') return false
+      if (filtro === 'todos_deudores' && !s.tieneDeuda) return false
+      if (filtro === 'solo_actual' && s.deudaPeriodoActual <= 0) return false
+      if (filtro === 'historica' && s.deudaHistorica <= 0) return false
       if (q && !`${s.nombre} ${s.apellido} ${s.numero_socio} ${s.email || ''}`.toLowerCase().includes(q)) return false
       return true
-    })
+    }).sort((a, b) => b.deudaTotal - a.deudaTotal)
   }, [sociosConEstado, filtro, busqueda])
 
   const resumen = useMemo(() => {
-    const sinPago = sociosConEstado.filter(s => s.estado === 'sin_pago').length
-    const parcial = sociosConEstado.filter(s => s.estado === 'parcial').length
-    const alDia = sociosConEstado.filter(s => s.estado === 'al_dia').length
-    const pendienteTotal = sociosConEstado.reduce((t, s) => t + s.pendiente, 0)
-    return { sinPago, parcial, alDia, pendienteTotal }
+    const deudores = sociosConEstado.filter(s => s.tieneDeuda)
+    const deudaTotalAcum = deudores.reduce((t, s) => t + s.deudaTotal, 0)
+    const soloActual = deudores.filter(s => s.deudaHistorica === 0 && s.deudaPeriodoActual > 0).length
+    const conHistorica = deudores.filter(s => s.deudaHistorica > 0).length
+    return { deudaTotalAcum, totalDeudores: deudores.length, soloActual, conHistorica }
   }, [sociosConEstado])
 
   // ── Acciones ──────────────────────────────────────────────────
   const datosBancariosTexto = buildDatosBancarios(config)
   const incluirDatosBancarios = config.cobranza_incluir_datos_bancarios !== 'false'
 
+  const buildDetalleDeuda = (socio) => {
+    if (!socio.aniosDeuda?.length) return '• Sin deuda registrada'
+    return socio.aniosDeuda.map(d => `• Cuota ${d.anio}: ${formatearMontoConSimbolo(d.pendiente)} pendiente (cuota ${formatearMontoConSimbolo(d.cuota)}, pagado ${formatearMontoConSimbolo(d.pagado)})`).join('\n')
+  }
+
   const buildVars = (socio) => ({
     nombre: `${socio.nombre} ${socio.apellido}`,
     anio,
     monto_cuota: formatearMontoConSimbolo(montoCuota),
-    monto_pagado: formatearMontoConSimbolo(socio.pagado),
-    monto_pendiente: formatearMontoConSimbolo(socio.pendiente),
+    monto_pagado: formatearMontoConSimbolo((socio.aniosDeuda || []).reduce((t, d) => t + d.pagado, 0)),
+    monto_pendiente: formatearMontoConSimbolo(socio.deudaTotal || 0),
+    detalle_deuda: buildDetalleDeuda(socio),
     datos_bancarios: incluirDatosBancarios ? datosBancariosTexto : '',
     referencia: socio.referencia,
   })
@@ -224,7 +242,7 @@ export default function Cobranza() {
       periodo_id: selectedPeriodo?.id,
       tipo,
       email_destino: socio.email || null,
-      monto_pendiente: socio.pendiente,
+      monto_pendiente: socio.deudaTotal || 0,
       estado,
       error_mensaje,
     })
@@ -272,7 +290,7 @@ export default function Cobranza() {
   }
 
   const handleEnviarMasivo = async () => {
-    const objetivo = sociosConEstado.filter(s => s.estado !== 'al_dia' && s.email)
+    const objetivo = sociosConEstado.filter(s => s.tieneDeuda && s.email)
     if (objetivo.length === 0) {
       showToast('No hay socios pendientes con email registrado', 'error')
       return
@@ -293,11 +311,13 @@ export default function Cobranza() {
 
   const handleCopiarSocio = async (socio) => {
     const texto = [
-      `Pago de cuota Teski Club ${anio}`,
+      `Pago de cuotas Teski Club`,
       ``,
       datosBancariosTexto,
       ``,
-      `Monto: ${formatearMontoConSimbolo(socio.pendiente || montoCuota)}`,
+      `Monto total adeudado: ${formatearMontoConSimbolo(socio.deudaTotal || montoCuota)}`,
+      `Detalle:`,
+      buildDetalleDeuda(socio),
       `Referencia: ${socio.referencia}`,
     ].join('\n')
     const ok = await copiarPortapapeles(texto)
@@ -360,7 +380,7 @@ export default function Cobranza() {
         {editable && <button
           className="btn btn-primary"
           onClick={handleEnviarMasivo}
-          disabled={enviandoMasivo || sociosConEstado.filter(s => s.estado !== 'al_dia' && s.email).length === 0}
+          disabled={enviandoMasivo || sociosConEstado.filter(s => s.tieneDeuda && s.email).length === 0}
           style={{ marginLeft: 'auto' }}
         >
           {enviandoMasivo
@@ -372,10 +392,10 @@ export default function Cobranza() {
       {/* Resumen */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: '1.5rem' }}>
         {[
-          { label: 'Sin pago', value: resumen.sinPago, color: '#f09595' },
-          { label: 'Pago parcial', value: resumen.parcial, color: '#fac775' },
-          { label: 'Al día', value: resumen.alDia, color: '#5dcaa5' },
-          { label: 'Pendiente total', value: formatearMontoConSimbolo(resumen.pendienteTotal), color: 'var(--gold-light)' },
+          { label: 'Deuda total acumulada', value: formatearMontoConSimbolo(resumen.deudaTotalAcum), color: '#f09595' },
+          { label: 'Socios con deuda', value: resumen.totalDeudores, color: '#fac775' },
+          { label: 'Solo período actual', value: resumen.soloActual, color: '#85b7eb' },
+          { label: 'Con deuda histórica', value: resumen.conHistorica, color: '#afa9ec' },
         ].map(s => (
           <div key={s.label} style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 10, padding: '1rem 1.25rem' }}>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', letterSpacing: 1.5, textTransform: 'uppercase', fontFamily: 'sans-serif', marginBottom: 6 }}>{s.label}</div>
@@ -471,7 +491,7 @@ export default function Cobranza() {
               <input value={asunto} onChange={e => setAsunto(e.target.value)} placeholder="Recordatorio de cuota..." />
             </div>
             <div className="form-group" style={{ padding: 0 }}>
-              <label>Cuerpo (placeholders disponibles: {'{nombre} {anio} {monto_cuota} {monto_pagado} {monto_pendiente} {referencia} {datos_bancarios}'})</label>
+              <label>Cuerpo (placeholders disponibles: {'{nombre} {anio} {monto_cuota} {monto_pagado} {monto_pendiente} {detalle_deuda} {referencia} {datos_bancarios}'})</label>
               <textarea
                 rows={16}
                 value={cuerpo}
@@ -497,13 +517,12 @@ export default function Cobranza() {
       {/* Tabla de socios */}
       <div className="card">
         <div className="card-header">
-          <div className="card-title"><i className="ti ti-users"></i> Socios ({sociosFiltrados.length})</div>
+          <div className="card-title"><i className="ti ti-users"></i> Deudores ({sociosFiltrados.length})</div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <select value={filtro} onChange={e => setFiltro(e.target.value)} style={{ width: 'auto' }}>
-              <option value="pendientes">Pendientes</option>
-              <option value="sin_pago">Sin pago</option>
-              <option value="parcial">Pago parcial</option>
-              <option value="todos">Todos</option>
+              <option value="todos_deudores">Todos los deudores</option>
+              <option value="solo_actual">Solo período actual</option>
+              <option value="historica">Con deuda histórica</option>
             </select>
             <div className="search-box">
               <i className="ti ti-search"></i>
@@ -520,11 +539,10 @@ export default function Cobranza() {
             <thead>
               <tr>
                 <th>Socio</th>
-                <th>Email</th>
-                <th>Pagado</th>
-                <th>Pendiente</th>
-                <th>Estado</th>
-                <th>Referencia</th>
+                <th>Deuda total</th>
+                <th>Años con deuda</th>
+                <th>Detalle deuda</th>
+                <th>Último pago</th>
                 <th>Acciones</th>
               </tr>
             </thead>
@@ -540,22 +558,37 @@ export default function Cobranza() {
                         </div>
                         <div>
                           <div>{s.nombre} {s.apellido}</div>
-                          <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{s.numero_socio}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                            {s.numero_socio}
+                            {s.email ? <> · {s.email}</> : <span style={{ color: '#f09595' }}> · sin email</span>}
+                          </div>
                         </div>
                       </div>
                     </td>
+                    <td style={{ color: '#f09595', fontWeight: 'bold', fontSize: 14 }}>
+                      {s.deudaTotal > 0 ? formatearMontoConSimbolo(s.deudaTotal) : '—'}
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {s.aniosDeuda.map(d => {
+                          const sinPago = d.pagado === 0
+                          return (
+                            <span key={d.anio} className={`badge ${sinPago ? 'badge-inactive' : 'badge-pending'}`}
+                              title={`${d.anio}: ${formatearMontoConSimbolo(d.pendiente)} pendiente de ${formatearMontoConSimbolo(d.cuota)}`}>
+                              {d.anio}
+                            </span>
+                          )
+                        })}
+                        {s.aniosDeuda.length === 0 && <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>—</span>}
+                      </div>
+                    </td>
+                    <td style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                      {s.aniosDeuda.length > 0
+                        ? s.aniosDeuda.map(d => `${d.anio}: ${formatearMontoConSimbolo(d.pendiente)}`).join(' · ')
+                        : '—'}
+                    </td>
                     <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                      {s.email || <span style={{ color: '#f09595' }}>sin email</span>}
-                    </td>
-                    <td className="amount-pos">{formatearMontoConSimbolo(s.pagado)}</td>
-                    <td className="amount-neg">{formatearMontoConSimbolo(s.pendiente)}</td>
-                    <td>
-                      {s.estado === 'al_dia' && <span className="badge badge-active">Al día</span>}
-                      {s.estado === 'parcial' && <span className="badge badge-pending">Parcial</span>}
-                      {s.estado === 'sin_pago' && <span className="badge badge-inactive">Sin pago</span>}
-                    </td>
-                    <td>
-                      <span className="chip" style={{ fontSize: 10 }}>{s.referencia}</span>
+                      {s.ultimoPago ? s.ultimoPago.split('-').reverse().join('/') : '—'}
                     </td>
                     <td>
                       <div style={{ display: 'flex', gap: 4 }}>
@@ -576,12 +609,12 @@ export default function Cobranza() {
                         {editable && (
                           <button
                             className="btn btn-sm"
-                            title={s.email ? 'Enviar recordatorio' : 'Socio sin email'}
+                            title={s.email ? 'Cobrar — enviar email con desglose de toda la deuda' : 'Socio sin email'}
                             disabled={!s.email || enviando}
                             onClick={() => handleEnviarIndividual(s)}
                             style={{ color: s.email ? '#5dcaa5' : 'var(--text-dim)', borderColor: s.email ? 'rgba(29,158,117,0.4)' : 'var(--border)' }}
                           >
-                            <i className={`ti ${enviando ? 'ti-loader' : 'ti-send'}`}></i>
+                            <i className={`ti ${enviando ? 'ti-loader' : 'ti-send'}`}></i> Cobrar
                           </button>
                         )}
                       </div>
