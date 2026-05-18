@@ -55,6 +55,7 @@ export default function Reporteria() {
   const [filtroSaldos, setFiltroSaldos] = useState('todos')
 
   const [incorporaciones, setIncorporaciones] = useState([])
+  const [otrosIngresos, setOtrosIngresos] = useState([])
 
   useEffect(() => {
     loadTodo()
@@ -64,15 +65,16 @@ export default function Reporteria() {
     setLoading(true)
     const [
       { data: s }, { data: p }, { data: pg },
-      { data: b }, { data: ch }, { data: mv }, { data: inc }
+      { data: b }, { data: ch }, { data: mv }, { data: inc }, { data: oi }
     ] = await Promise.all([
       supabase.from('socios').select('*').order('numero_socio'),
       supabase.from('periodos_cuota').select('*').order('anio', { ascending: false }),
-      supabase.from('pagos_cuota').select('*, cheques(numero,fecha_deposito,estado)').order('fecha_pago', { ascending: false }),
+      supabase.from('pagos_cuota').select('*, cheques(numero,fecha_deposito,estado), periodos_cuota(anio)').order('fecha_pago', { ascending: false }),
       supabase.from('beneficiarios').select('*').order('socio_id'),
       supabase.from('cheques').select('*').order('created_at', { ascending: false }),
       supabase.from('movimientos').select('*').eq('estado', 'conciliado').order('fecha', { ascending: false }),
       supabase.from('incorporaciones').select('*, cheques(numero,monto,banco_emisor,fecha_deposito,estado)').order('fecha', { ascending: false }),
+      supabase.from('otros_ingresos').select('movimiento_id,concepto,descripcion').not('movimiento_id', 'is', null),
     ])
     setSocios(s || [])
     setPeriodos(p || [])
@@ -81,6 +83,7 @@ export default function Reporteria() {
     setCheques(ch || [])
     setMovimientos(mv || [])
     setIncorporaciones(inc || [])
+    setOtrosIngresos(oi || [])
     setLoading(false)
   }
 
@@ -505,17 +508,43 @@ export default function Reporteria() {
               <div className="empty-state"><i className="ti ti-list-off"></i>Sin movimientos conciliados para este socio</div>
             ) : (
               <table>
-                <thead><tr><th>Fecha</th><th>Descripción</th><th>RUT detectado</th><th>Monto</th><th>Estado</th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Descripción</th><th>RUT detectado</th><th>Monto</th><th>Concepto</th><th>Estado</th></tr></thead>
                 <tbody>
-                  {movsSocio.map(m => (
+                  {movsSocio.map(m => {
+                    const pagosDelMov = pagos.filter(p => p.movimiento_id === m.id)
+                    const otroIng = otrosIngresos.find(o => o.movimiento_id === m.id)
+                    return (
                     <tr key={m.id}>
                       <td style={{ color: 'var(--text-muted)' }}>{m.fecha ? m.fecha.split('-').reverse().join('/') : '—'}</td>
                       <td style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 280 }}>{m.descripcion}</td>
                       <td style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)' }}>{m.rut_detectado || '—'}</td>
                       <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>{formatearMontoConSimbolo(m.monto)}</td>
+                      <td>
+                        {pagosDelMov.length > 0 ? (
+                          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                            {pagosDelMov.map(p => {
+                              const concepto = p.concepto || 'Cuota social'
+                              const anio = p.periodos_cuota?.anio || ''
+                              const isIncorp = concepto.toLowerCase().includes('incorpora')
+                              return (
+                                <span key={p.id} style={{
+                                  display: 'inline-flex', padding: '2px 7px', borderRadius: 4,
+                                  fontSize: 10, fontWeight: 500,
+                                  background: isIncorp ? 'rgba(239,159,39,0.15)' : 'rgba(55,138,221,0.15)',
+                                  color: isIncorp ? '#fac775' : '#85b7eb',
+                                }}>{concepto}{anio ? ` ${anio}` : ''}</span>
+                              )
+                            })}
+                          </div>
+                        ) : otroIng ? (
+                          <span style={{ display: 'inline-flex', padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 500, background: 'rgba(175,169,236,0.15)', color: '#afa9ec' }}>
+                            {otroIng.concepto}
+                          </span>
+                        ) : <span style={{ color: 'var(--text-dim)', fontSize: 11 }}>—</span>}
+                      </td>
                       <td><span className="badge badge-active">Conciliado</span></td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             )}
