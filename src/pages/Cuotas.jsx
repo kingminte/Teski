@@ -264,25 +264,6 @@ export default function Cuotas() {
     <div>
       {ToastComponent}
 
-      {/* Selector de período */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <label style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>Período:</label>
-          <select value={selectedPeriodo?.id || ''} onChange={e => setSelectedPeriodo(periodos.find(p => p.id === e.target.value))} style={{ width: 'auto' }}>
-            {periodos.map(p => <option key={p.id} value={p.id}>{p.anio} — ${p.monto.toLocaleString('es-CL')}</option>)}
-          </select>
-        </div>
-        {editable && <button className="btn btn-primary" onClick={() => setShowModalPeriodo(true)}>
-          <i className="ti ti-plus"></i> Nuevo período anual
-        </button>}
-        {!esSocio && selectedPeriodo && (
-          <button className="btn" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)', marginLeft: 'auto' }}
-            onClick={handleExportar} disabled={exportando}>
-            {exportando ? <><i className="ti ti-loader"></i> Exportando…</> : <><i className="ti ti-file-spreadsheet"></i> Exportar Excel</>}
-          </button>
-        )}
-      </div>
-
       {/* Aviso para socios sin vinculación */}
       {esSocio && !miSocioId && (
         <div className="empty-state">
@@ -373,11 +354,24 @@ export default function Cuotas() {
         )
       })()}
 
-      {esSocio && miSocioId && (
-        <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, margin: '1.5rem 0 0.5rem', display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'sans-serif' }}>
-          <i className="ti ti-arrow-down"></i> Detalle del período seleccionado
+      {/* Selector de período */}
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>Período:</label>
+          <select value={selectedPeriodo?.id || ''} onChange={e => setSelectedPeriodo(periodos.find(p => p.id === e.target.value))} style={{ width: 'auto' }}>
+            {periodos.map(p => <option key={p.id} value={p.id}>{p.anio} — ${p.monto.toLocaleString('es-CL')}</option>)}
+          </select>
         </div>
-      )}
+        {editable && <button className="btn btn-primary" onClick={() => setShowModalPeriodo(true)}>
+          <i className="ti ti-plus"></i> Nuevo período anual
+        </button>}
+        {!esSocio && selectedPeriodo && (
+          <button className="btn" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)', marginLeft: 'auto' }}
+            onClick={handleExportar} disabled={exportando}>
+            {exportando ? <><i className="ti ti-loader"></i> Exportando…</> : <><i className="ti ti-file-spreadsheet"></i> Exportar Excel</>}
+          </button>
+        )}
+      </div>
 
       {/* Stats */}
       {selectedPeriodo && (!esSocio || miSocioId) && (() => {
