@@ -534,6 +534,7 @@ export default function Cuotas() {
                                 <thead>
                                   <tr>
                                     <th style={{ padding: '5px 10px', fontSize: 10, color: 'var(--text-dim)', textAlign: 'left', textTransform: 'uppercase', letterSpacing: 1 }}>Fecha</th>
+                                    <th style={{ padding: '5px 10px', fontSize: 10, color: 'var(--text-dim)', textAlign: 'left', textTransform: 'uppercase', letterSpacing: 1 }}>Concepto</th>
                                     <th style={{ padding: '5px 10px', fontSize: 10, color: 'var(--text-dim)', textAlign: 'left', textTransform: 'uppercase', letterSpacing: 1 }}>Monto</th>
                                     <th style={{ padding: '5px 10px', fontSize: 10, color: 'var(--text-dim)', textAlign: 'left', textTransform: 'uppercase', letterSpacing: 1 }}>Forma pago</th>
                                     <th style={{ padding: '5px 10px', fontSize: 10, color: 'var(--text-dim)', textAlign: 'left', textTransform: 'uppercase', letterSpacing: 1 }}>Cheque</th>
@@ -550,6 +551,9 @@ export default function Cuotas() {
                                             <input type="date" value={editPago.fecha_pago}
                                               onChange={e => setEditPago(ep => ({ ...ep, fecha_pago: e.target.value }))}
                                               style={{ fontSize: 12, padding: '3px 6px', width: 130 }} />
+                                          </td>
+                                          <td style={{ padding: '6px 10px', fontSize: 11, color: 'var(--text-dim)' }}>
+                                            {p.concepto || 'Cuota social'}
                                           </td>
                                           <td style={{ padding: '6px 10px' }}>
                                             <input type="text" inputMode="numeric"
@@ -589,6 +593,24 @@ export default function Cuotas() {
                                         <>
                                           <td style={{ padding: '6px 10px', fontSize: 12, color: 'var(--text-muted)' }}>
                                             {p.fecha_pago.split('-').reverse().join('/')}
+                                          </td>
+                                          <td style={{ padding: '6px 10px' }}>
+                                            {(() => {
+                                              const concepto = p.concepto || 'Cuota social'
+                                              const lc = concepto.toLowerCase()
+                                              const isIncorp = lc.includes('incorpora')
+                                              const isCuota = lc.includes('cuota')
+                                              const style = isIncorp
+                                                ? { background: 'rgba(239,159,39,0.15)', color: '#fac775' }
+                                                : isCuota
+                                                  ? { background: 'rgba(55,138,221,0.15)', color: '#85b7eb' }
+                                                  : { background: 'rgba(175,169,236,0.15)', color: '#afa9ec' }
+                                              return (
+                                                <span style={{ display: 'inline-flex', padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 500, ...style }}>
+                                                  {concepto}
+                                                </span>
+                                              )
+                                            })()}
                                           </td>
                                           <td style={{ padding: '6px 10px', fontSize: 13, color: '#5dcaa5', fontWeight: 'bold' }}>
                                             {formatearMontoConSimbolo(p.monto)}
