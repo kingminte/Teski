@@ -51,6 +51,8 @@ export default function Reporteria() {
   const [filtroEstado, setFiltroEstado] = useState('todos')
   const [busqueda, setBusqueda] = useState('')
   const [exportando, setExportando] = useState(false)
+  const [tabReporteria, setTabReporteria] = useState('fichas')
+  const [filtroSaldos, setFiltroSaldos] = useState('todos')
 
   const [incorporaciones, setIncorporaciones] = useState([])
 
@@ -523,11 +525,210 @@ export default function Reporteria() {
     )
   }
 
+  // Saldos históricos
+  const calcularSaldosHistoricos = () => {
+    return socios.map(s => {
+      const anioIngreso = s.fecha_ingreso ? parseInt(s.fecha_ingreso.slice(0, 4)) : null
+      const anioInactividad = s.fecha_inactividad ? parseInt(s.fecha_inactividad.slice(0, 4)) : null
+      const aniosData = {}
+      let totalPagado = 0
+      let totalDeuda = 0
+      for (const p of periodos) {
+        if (anioIngreso && p.anio < anioIngreso) { aniosData[p.anio] = { pagado: null, pendiente: null }; continue }
+        if (s.estado === 'inactivo' && anioInactividad && anioInactividad < p.anio) { aniosData[p.anio] = { pagado: null, pendiente: null }; continue }
+        const pagosP = pagos.filter(pg => pg.socio_id === s.id && pg.periodo_id === p.id)
+        const pagado = pagosP.reduce((t, pg) => t + pg.monto, 0)
+        const pendiente = Math.max(0, p.monto - pagado)
+        aniosData[p.anio] = { pagado, pendiente, cuota: p.monto }
+        totalPagado += pagado
+        totalDeuda += pendiente
+      }
+      return { ...s, aniosData, totalPagado, totalDeuda }
+    })
+  }
+
+  const handleExportSaldos = async () => {
+    try {
+      const XLSX = await import('xlsx')
+      const wb = XLSX.utils.book_new()
+      const aniosOrd = [...periodos].sort((a, b) => a.anio - b.anio)
+      const headers = ['N° Socio', 'Nombre', 'Apellido', 'RUT', 'Email', 'Estado', 'Beneficiarios', 'F. Ingreso',
+        ...aniosOrd.map(p => String(p.anio)),
+        'Total pagado', 'Total deuda',
+      ]
+      const datos = calcularSaldosHistoricos()
+      const filtrados = datos.filter(s => {
+        if (filtroSaldos === 'con_deuda') return s.totalDeuda > 0
+        if (filtroSaldos === 'al_dia') return s.totalDeuda === 0
+        return true
+      })
+      const rows = filtrados.map(s => {
+        const benes = beneficiarios.filter(b => b.socio_id === s.id).length
+        return [
+          s.numero_socio,
+          s.nombre,
+          s.apellido,
+          s.rut,
+          s.email || '',
+          s.estado,
+          benes,
+          s.fecha_ingreso ? s.fecha_ingreso.split('-').reverse().join('/') : '',
+          ...aniosOrd.map(p => {
+            const d = s.aniosData[p.anio]
+            return d && d.pagado !== null ? d.pagado : ''
+          }),
+          s.totalPagado,
+          s.totalDeuda,
+        ]
+      })
+      const totales = [
+        '', '', '', '', '', '', '', 'TOTALES',
+        ...aniosOrd.map(p => filtrados.reduce((t, s) => {
+          const d = s.aniosData[p.anio]
+          return t + (d && d.pagado !== null ? d.pagado : 0)
+        }, 0)),
+        filtrados.reduce((t, s) => t + s.totalPagado, 0),
+        filtrados.reduce((t, s) => t + s.totalDeuda, 0),
+      ]
+      const ws = XLSX.utils.aoa_to_sheet([headers, ...rows, totales])
+      ws['!cols'] = headers.map((_, i) => ({ wch: i < 2 ? 10 : i < 5 ? 18 : 14 }))
+      XLSX.utils.book_append_sheet(wb, ws, 'Saldos históricos')
+      XLSX.writeFile(wb, `Saldos_historicos_${new Date().toISOString().slice(0, 10)}.xlsx`)
+      showToast('Excel exportado')
+    } catch (e) {
+      showToast('Error al exportar: ' + e.message, 'error')
+    }
+  }
+
   // LISTA DE SOCIOS
   return (
     <div>
       {ToastComponent}
 
+      {/* Tabs Reportería */}
+      <div style={{ display: 'flex', borderBottom: '0.5px solid var(--border)', marginBottom: '1rem' }}>
+        {[
+          { id: 'fichas', icon: 'ti-users', label: 'Fichas de socios' },
+          { id: 'saldos', icon: 'ti-chart-bar', label: 'Saldos históricos' },
+        ].map(t => (
+          <button key={t.id} onClick={() => setTabReporteria(t.id)} style={{
+            padding: '8px 20px', fontSize: 13, border: 'none', background: 'transparent',
+            color: tabReporteria === t.id ? 'var(--gold)' : 'var(--text-muted)',
+            borderBottom: `2px solid ${tabReporteria === t.id ? 'var(--gold)' : 'transparent'}`,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+            fontFamily: 'sans-serif', fontWeight: tabReporteria === t.id ? 'bold' : 'normal',
+          }}>
+            <i className={`ti ${t.icon}`}></i> {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tabReporteria === 'saldos' && (() => {
+        const data = calcularSaldosHistoricos()
+        const filtrados = data.filter(s => {
+          if (filtroSaldos === 'con_deuda') return s.totalDeuda > 0
+          if (filtroSaldos === 'al_dia') return s.totalDeuda === 0
+          return true
+        })
+        const aniosOrd = [...periodos].sort((a, b) => a.anio - b.anio)
+        const totalRecaudado = data.reduce((t, s) => t + s.totalPagado, 0)
+        const totalDeudaG = data.reduce((t, s) => t + s.totalDeuda, 0)
+        const alDia = data.filter(s => s.totalDeuda === 0).length
+        const conDeuda = data.filter(s => s.totalDeuda > 0).length
+        return (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: '1rem' }}>
+              {[
+                { label: 'Total recaudado', value: formatearMontoConSimbolo(totalRecaudado), color: '#5dcaa5', sub: 'Todos los períodos' },
+                { label: 'Deuda acumulada', value: formatearMontoConSimbolo(totalDeudaG), color: '#f09595', sub: 'Pendiente de cobro' },
+                { label: 'Socios al día', value: alDia, color: '#85b7eb', sub: 'Sin deuda en ningún año' },
+                { label: 'Socios con deuda', value: conDeuda, color: '#fac775', sub: 'Deben en 1 o más años' },
+              ].map(s => (
+                <div key={s.label} style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.85rem 1rem', borderLeft: `3px solid ${s.color}` }}>
+                  <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>{s.label}</div>
+                  <div style={{ fontSize: 18, fontWeight: 'bold', color: s.color }}>{s.value}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginTop: 2 }}>{s.sub}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <div className="card-title"><i className="ti ti-chart-bar"></i> Saldos históricos por socio — Monto pagado por año</div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                  {[
+                    { id: 'todos', label: 'Todos' },
+                    { id: 'con_deuda', label: 'Con deuda' },
+                    { id: 'al_dia', label: 'Al día' },
+                  ].map(f => (
+                    <button key={f.id} className={`btn btn-sm${filtroSaldos === f.id ? ' btn-primary' : ''}`} onClick={() => setFiltroSaldos(f.id)}>
+                      {f.label}
+                    </button>
+                  ))}
+                  <button className="btn btn-sm" style={{ color: '#5dcaa5', borderColor: 'rgba(29,158,117,0.4)', marginLeft: 8 }} onClick={handleExportSaldos}>
+                    <i className="ti ti-file-spreadsheet"></i> Excel
+                  </button>
+                </div>
+              </div>
+              {filtrados.length === 0 ? (
+                <div className="empty-state"><i className="ti ti-mood-smile"></i>Sin resultados</div>
+              ) : (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>N° Socio</th>
+                      <th>Nombre</th>
+                      <th>RUT</th>
+                      <th>Estado</th>
+                      {aniosOrd.map(p => <th key={p.id} style={{ textAlign: 'right', color: '#85b7eb' }}>{p.anio}</th>)}
+                      <th style={{ textAlign: 'right', color: '#5dcaa5' }}>Total pagado</th>
+                      <th style={{ textAlign: 'right', color: '#f09595' }}>Total deuda</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtrados.map(s => (
+                      <tr key={s.id}>
+                        <td><span className="chip">{s.numero_socio}</span></td>
+                        <td style={{ fontWeight: 500 }}>{s.nombre} {s.apellido}</td>
+                        <td style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)' }}>{s.rut || '—'}</td>
+                        <td>
+                          {s.estado === 'activo' && <span className="badge badge-active">Activo</span>}
+                          {s.estado === 'inactivo' && <span className="badge badge-inactive">Inactivo</span>}
+                          {s.estado === 'pendiente' && <span className="badge badge-pending">Pendiente</span>}
+                        </td>
+                        {aniosOrd.map(p => {
+                          const d = s.aniosData[p.anio]
+                          if (!d || d.pagado === null) return <td key={p.id} style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 11, color: 'var(--text-dim)' }}>—</td>
+                          const color = d.pagado >= d.cuota ? '#5dcaa5' : d.pagado > 0 ? '#fac775' : '#f09595'
+                          return <td key={p.id} style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 11, color }}>{formatearMontoConSimbolo(d.pagado)}</td>
+                        })}
+                        <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 'bold', color: '#5dcaa5' }}>{formatearMontoConSimbolo(s.totalPagado)}</td>
+                        <td style={{ textAlign: 'right', fontFamily: 'monospace', fontWeight: 'bold', color: s.totalDeuda > 0 ? '#f09595' : 'var(--text-muted)' }}>{s.totalDeuda > 0 ? formatearMontoConSimbolo(s.totalDeuda) : '$0'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ fontWeight: 'bold', borderTop: '2px solid var(--border)', background: 'rgba(201,168,76,0.04)' }}>
+                      <td colSpan={4} style={{ textAlign: 'right', paddingRight: 12 }}>TOTALES</td>
+                      {aniosOrd.map(p => {
+                        const totalAnio = filtrados.reduce((t, s) => {
+                          const d = s.aniosData[p.anio]
+                          return t + (d && d.pagado !== null ? d.pagado : 0)
+                        }, 0)
+                        return <td key={p.id} style={{ textAlign: 'right', fontFamily: 'monospace', fontSize: 11 }}>{formatearMontoConSimbolo(totalAnio)}</td>
+                      })}
+                      <td style={{ textAlign: 'right', fontFamily: 'monospace', color: '#5dcaa5' }}>{formatearMontoConSimbolo(filtrados.reduce((t, s) => t + s.totalPagado, 0))}</td>
+                      <td style={{ textAlign: 'right', fontFamily: 'monospace', color: '#f09595' }}>{formatearMontoConSimbolo(filtrados.reduce((t, s) => t + s.totalDeuda, 0))}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              )}
+            </div>
+          </>
+        )
+      })()}
+
+      {tabReporteria === 'fichas' && (
       <div className="card">
         <div className="card-header">
           <div className="card-title"><i className="ti ti-users"></i> Socios — haz clic para ver ficha completa</div>
@@ -596,6 +797,7 @@ export default function Reporteria() {
           )
         })}
       </div>
+      )}
     </div>
   )
 }
