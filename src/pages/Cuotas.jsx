@@ -34,6 +34,7 @@ export default function Cuotas() {
   const [editPago, setEditPago] = useState(null)
   const [exportando, setExportando] = useState(false)
   const [misCheques, setMisCheques] = useState([])
+  const [pagosTodos, setPagosTodos] = useState([])
 
   useEffect(() => {
     loadPeriodos()
@@ -92,6 +93,40 @@ export default function Cuotas() {
   }
 
   useEffect(() => { if (selectedPeriodo) loadPagos(selectedPeriodo.id) }, [selectedPeriodo])
+
+  useEffect(() => {
+    let q = supabase.from('pagos_cuota').select('socio_id,periodo_id,monto')
+    if (esSocio && miSocioId) q = q.eq('socio_id', miSocioId)
+    q.then(({ data }) => setPagosTodos(data || []))
+  }, [esSocio, miSocioId, pagos])
+
+  const calcularDeudaConsolidada = (socioId) => {
+    const socio = socios.find(s => s.id === socioId)
+    const anioIngreso = socio?.fecha_ingreso ? parseInt(socio.fecha_ingreso.slice(0, 4)) : null
+    const rows = []
+    for (const p of periodos) {
+      if (anioIngreso && p.anio < anioIngreso) continue
+      const pagosPer = pagosTodos.filter(pg => pg.socio_id === socioId && pg.periodo_id === p.id)
+      const totalPagado = pagosPer.reduce((t, pg) => t + pg.monto, 0)
+      const pendiente = Math.max(0, p.monto - totalPagado)
+      rows.push({
+        anio: p.anio,
+        cuota: p.monto,
+        pagado: totalPagado,
+        pendiente,
+        pct: p.monto > 0 ? Math.round((totalPagado / p.monto) * 100) : 0,
+        estado: totalPagado >= p.monto ? 'al_dia' : totalPagado > 0 ? 'parcial' : 'sin_pago',
+      })
+    }
+    return rows.sort((a, b) => a.anio - b.anio)
+  }
+
+  const deudaHistoricaSocio = (socioId) => {
+    if (!selectedPeriodo) return { monto: 0, detalle: [] }
+    const consolidada = calcularDeudaConsolidada(socioId)
+    const previos = consolidada.filter(r => r.anio < selectedPeriodo.anio && r.pendiente > 0)
+    return { monto: previos.reduce((t, r) => t + r.pendiente, 0), detalle: previos }
+  }
 
   const loadPeriodos = async () => {
     const { data } = await supabase.from('periodos_cuota').select('*').order('anio', { ascending: false })
@@ -256,6 +291,94 @@ export default function Cuotas() {
         </div>
       )}
 
+      {/* Deuda consolidada (solo socio) */}
+      {esSocio && miSocioId && (() => {
+        const consolidada = calcularDeudaConsolidada(miSocioId)
+        const conDeuda = consolidada.some(r => r.pendiente > 0)
+        if (!conDeuda) return null
+        const totalDeuda = consolidada.reduce((t, r) => t + r.pendiente, 0)
+        const totalPagado = consolidada.reduce((t, r) => t + r.pagado, 0)
+        const totalComprometido = consolidada.reduce((t, r) => t + r.cuota, 0)
+        const aniosConDeuda = consolidada.filter(r => r.pendiente > 0).length
+        return (
+          <div className="card" style={{ borderLeft: '3px solid #fac775', marginBottom: '1rem' }}>
+            <div className="card-header">
+              <div className="card-title" style={{ color: '#fac775' }}>
+                <i className="ti ti-alert-triangle"></i> Resumen de deuda consolidada
+              </div>
+              <span className="badge badge-pending">Tienes cuotas pendientes</span>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, padding: '1rem 1.25rem', borderBottom: '0.5px solid var(--border)' }}>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Deuda total</div>
+                <div style={{ fontSize: 18, fontWeight: 'bold', color: '#f09595' }}>{formatearMontoConSimbolo(totalDeuda)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Años con deuda</div>
+                <div style={{ fontSize: 18, fontWeight: 'bold', color: '#fac775' }}>{aniosConDeuda}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Total pagado</div>
+                <div style={{ fontSize: 18, fontWeight: 'bold', color: '#5dcaa5' }}>{formatearMontoConSimbolo(totalPagado)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Total comprometido</div>
+                <div style={{ fontSize: 18, fontWeight: 'bold', color: 'var(--gold-light)' }}>{formatearMontoConSimbolo(totalComprometido)}</div>
+              </div>
+            </div>
+            <table>
+              <thead>
+                <tr><th>Año</th><th>Cuota</th><th>Pagado</th><th>Pendiente</th><th>Avance</th><th>Estado</th></tr>
+              </thead>
+              <tbody>
+                {consolidada.map(r => {
+                  const bg = r.estado === 'sin_pago' ? 'rgba(240,149,149,0.05)' : r.estado === 'parcial' ? 'rgba(250,199,117,0.05)' : 'transparent'
+                  const barColor = r.pct === 0 ? '#f09595' : r.pct >= 100 ? '#5dcaa5' : '#fac775'
+                  return (
+                    <tr key={r.anio} style={{ background: bg }}>
+                      <td style={{ fontWeight: 500 }}>{r.anio}</td>
+                      <td style={{ color: 'var(--text-muted)' }}>{formatearMontoConSimbolo(r.cuota)}</td>
+                      <td style={{ color: '#5dcaa5' }}>{formatearMontoConSimbolo(r.pagado)}</td>
+                      <td style={{ color: r.estado === 'sin_pago' ? '#f09595' : r.estado === 'parcial' ? '#fac775' : 'var(--text-muted)', fontWeight: r.pendiente > 0 ? 'bold' : 'normal' }}>
+                        {r.pendiente > 0 ? formatearMontoConSimbolo(r.pendiente) : '—'}
+                      </td>
+                      <td style={{ width: 160 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{ flex: 1, height: 5, background: 'rgba(201,168,76,0.15)', borderRadius: 3, overflow: 'hidden' }}>
+                            <div style={{ width: `${Math.min(100, r.pct)}%`, height: '100%', background: barColor, transition: 'width 0.3s' }}></div>
+                          </div>
+                          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif', minWidth: 32 }}>{r.pct}%</span>
+                        </div>
+                      </td>
+                      <td>
+                        {r.estado === 'al_dia' && <span className="badge badge-active">Al día</span>}
+                        {r.estado === 'parcial' && <span className="badge badge-pending">Parcial</span>}
+                        {r.estado === 'sin_pago' && <span className="badge badge-inactive">Sin pago</span>}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: 'rgba(10,22,40,0.4)', fontWeight: 'bold' }}>
+                  <td>Total</td>
+                  <td>{formatearMontoConSimbolo(totalComprometido)}</td>
+                  <td style={{ color: '#5dcaa5' }}>{formatearMontoConSimbolo(totalPagado)}</td>
+                  <td style={{ color: '#f09595' }}>{formatearMontoConSimbolo(totalDeuda)}</td>
+                  <td colSpan={2}></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )
+      })()}
+
+      {esSocio && miSocioId && (
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, margin: '1.5rem 0 0.5rem', display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'sans-serif' }}>
+          <i className="ti ti-arrow-down"></i> Detalle del período seleccionado
+        </div>
+      )}
+
       {/* Stats */}
       {selectedPeriodo && (!esSocio || miSocioId) && (() => {
         const miPagado = esSocio && socios[0] ? (pagosPorSocio[socios[0].id]?.total || 0) : 0
@@ -303,7 +426,7 @@ export default function Cuotas() {
             ) : (
               <table>
                 <thead>
-                  <tr><th>Socio</th><th>Estado socio</th><th>Pagado</th><th>Pendiente</th><th>Estado</th><th>Última fecha</th>{editable && <th>Acciones</th>}</tr>
+                  <tr><th>Socio</th><th>Estado socio</th><th>Pagado</th><th>Pendiente</th>{!esSocio && <th>Deuda anterior</th>}<th>Estado</th><th>Última fecha</th>{editable && <th>Acciones</th>}</tr>
                 </thead>
                 <tbody>
                   {sociosFiltrados.map(s => {
@@ -362,6 +485,19 @@ export default function Cuotas() {
                         <td style={{ color: pendiente > 0 ? '#fac775' : 'var(--text-dim)' }}>
                           {pendiente > 0 ? `$${pendiente.toLocaleString('es-CL')}` : '—'}
                         </td>
+                        {!esSocio && (() => {
+                          const d = deudaHistoricaSocio(s.id)
+                          if (d.monto === 0) return <td style={{ color: 'var(--text-dim)' }}>—</td>
+                          const tooltip = d.detalle.map(r => `${r.anio}: $${r.pendiente.toLocaleString('es-CL')}`).join(' · ')
+                          return (
+                            <td>
+                              <span className="chip" title={tooltip}
+                                style={{ background: 'rgba(240,149,149,0.15)', color: '#f09595', border: '0.5px solid rgba(240,149,149,0.3)', fontWeight: 'bold' }}>
+                                ${d.monto.toLocaleString('es-CL')}
+                              </span>
+                            </td>
+                          )
+                        })()}
                         <td>
                           {total === 0 && <span className="badge badge-pending">Sin pago</span>}
                           {total > 0 && total < montoAnual && <span className="badge badge-pending">Parcial ({pct}%)</span>}
