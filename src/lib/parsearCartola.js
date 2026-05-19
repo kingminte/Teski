@@ -137,8 +137,116 @@ export function extraerNombreDesdeDescripcion(descripcion) {
     .trim()
 }
 
-// Parsea las filas de la hoja de Santander y retorna movimientos normalizados
+// Wrapper que detecta el formato Santander y delega al parser correcto.
+// Formato antiguo (7 cols): encabezado "FECHA / SUCURSAL / DESCRIPCIÓN / N° DOC / CARGOS / ABONOS / SALDO", fechas DD/MM sin año.
+// Formato nuevo (5 cols): encabezado "FECHA / DETALLE / CARGOS / ABONOS / SALDO", fechas DD-MM-YYYY.
 export function parsearCartolaSantander(rows, anioDefault = null) {
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row) continue
+    const r0 = String(row[0] || '').trim().toLowerCase()
+    const r1 = String(row[1] || '').trim().toLowerCase()
+    const r2 = String(row[2] || '').trim().toLowerCase()
+    if (r0 === 'fecha' && (r1.includes('sucursal') || r2.includes('descripci'))) {
+      return parsearCartolaSantanderAntigua(rows, anioDefault)
+    }
+    if (r0 === 'fecha' && r1.includes('detalle')) {
+      return parsearCartolaSantanderNueva(rows, anioDefault)
+    }
+  }
+  return parsearCartolaSantanderNueva(rows, anioDefault)
+}
+
+// Formato antiguo (7 columnas, fecha DD/MM sin año, año en cabecera "Hasta DD/MM/YYYY")
+export function parsearCartolaSantanderAntigua(rows, anioDefault = null) {
+  const movimientos = []
+  let enDatos = false
+
+  // Detectar año desde cabecera
+  let anio = anioDefault
+  if (!anio) {
+    for (let i = 0; i < Math.min(rows.length, 10); i++) {
+      const row = rows[i]
+      if (!row) continue
+      for (let col = 0; col < row.length; col++) {
+        const celda = String(row[col] || '').trim()
+        if (celda.toLowerCase() === 'hasta' && row[col + 1]) {
+          const m = String(row[col + 1]).match(/\d{2}[\/\-]\d{2}[\/\-](\d{4})/)
+          if (m) { anio = m[1]; break }
+        }
+        const ma = celda.match(/\b(20\d{2})\b/)
+        if (ma && !anio) anio = ma[1]
+      }
+      if (anio) break
+    }
+  }
+  if (!anio) anio = String(new Date().getFullYear())
+
+  const parsearMonto = (v) => {
+    if (v === null || v === undefined || v === '') return 0
+    const n = parseFloat(String(v).replace(/\./g, '').replace(',', '.').replace(/[^0-9.-]/g, ''))
+    return isNaN(n) ? 0 : Math.abs(n)
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (!row || row.length === 0) continue
+    const r0 = String(row[0] || '').trim()
+    const r1 = String(row[1] || '').trim()
+    const r2 = String(row[2] || '').trim()
+
+    if (!enDatos) {
+      if (r0.toLowerCase() === 'fecha' && (r1.toLowerCase().includes('sucursal') || r2.toLowerCase().includes('descripci'))) {
+        enDatos = true
+      }
+      continue
+    }
+
+    // Fin de la sección de movimientos
+    if (r0.toLowerCase() === 'mensajes') break
+    if (!r0 && r2.toLowerCase().includes('resumen')) break
+    if (!r0 && !r2) continue
+
+    const partes = r0.split(/[\/\-]/)
+    if (partes.length < 2 || !/^\d{1,2}$/.test(partes[0])) continue
+    const dia = partes[0].padStart(2, '0')
+    const mes = partes[1].padStart(2, '0')
+    let anioFila = partes[2] || anio
+    if (anioFila.length === 2) anioFila = (parseInt(anioFila) > 50 ? '19' : '20') + anioFila
+    const fecha = `${anioFila}-${mes}-${dia}`
+
+    const sucursal = r1
+    const descripcion = r2
+    const nDocumento = String(row[3] || '').trim()
+    const cargo = parsearMonto(row[4])
+    const abono = parsearMonto(row[5])
+    const saldo = parsearMonto(row[6])
+
+    if (cargo === 0 && abono === 0) continue
+
+    const monto = abono > 0 ? Math.round(abono) : -Math.round(cargo)
+    const tipo = monto > 0 ? 'abono' : 'cargo'
+    const rutDetectado = tipo === 'abono' ? extraerRutDesdeDescripcion(descripcion) : null
+    const nombreDetectado = tipo === 'abono' ? extraerNombreDesdeDescripcion(descripcion) : null
+
+    movimientos.push({
+      fecha,
+      sucursal,
+      descripcion,
+      n_documento: nDocumento,
+      monto,
+      saldo: Math.round(saldo),
+      tipo,
+      estado: tipo === 'cargo' ? 'gasto' : 'pendiente',
+      rut_detectado: rutDetectado,
+      nombre_detectado: nombreDetectado,
+    })
+  }
+  return movimientos
+}
+
+// Formato nuevo (5 columnas, fechas DD-MM-YYYY, sección "DETALLE DE MOVIMIENTOS")
+export function parsearCartolaSantanderNueva(rows, anioDefault = null) {
   const movimientos = []
   let enDetalle = false
   // Si no se pasa anioDefault, intentar detectarlo desde la cabecera
