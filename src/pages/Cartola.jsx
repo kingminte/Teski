@@ -146,6 +146,7 @@ export default function Cartola() {
 
   const handleFile = async (file) => {
     if (!file) return
+    console.log('=== handleFile INICIO ===', { nombre: file.name, tamaño: file.size })
     const ext = file.name.split('.').pop().toLowerCase()
     if (!['xls','xlsx','csv'].includes(ext)) { showToast('Formato no soportado', 'error'); return }
     setUploading(true)
@@ -153,16 +154,23 @@ export default function Cartola() {
       // 1. Verificar duplicado por nombre
       const { data: existente } = await supabase.from('cartolas').select('id').eq('nombre_archivo', file.name).maybeSingle()
       if (existente) {
+        console.log('BLOQUEADO: cartola ya existe con ese nombre', existente)
         showToast(`La cartola "${file.name}" ya fue cargada anteriormente`, 'error')
         setUploading(false)
         return
       }
 
+      console.log('Leyendo archivo Excel…')
       const rows = await parseFile(file)
+      console.log('Filas leídas:', rows.length)
+      console.log('Fila 0:', rows[0])
+      console.log('Fila 20:', rows[20])
+      console.log('Fila 21:', rows[21])
 
       // 2. Detectar tipo de archivo
       const tipoArchivo = detectarTipoArchivo(file.name, rows)
       const esUltimosMovimientos = tipoArchivo === 'ultimos_movimientos'
+      console.log('Tipo archivo detectado:', tipoArchivo)
 
       // 3. Parsear según tipo
       let movs, cabecera, resumenData
@@ -171,10 +179,12 @@ export default function Cartola() {
         cabecera = extraerCabeceraUltimosMovimientos(rows)
         resumenData = null // No tiene resumen de cuenta corriente
       } else {
+        console.log('Llamando a parsearCartolaSantander…')
         movs = parsearCartolaSantander(rows)
         cabecera = extraerCabeceraCartola(rows)
         resumenData = extraerResumenCartola(rows)
       }
+      console.log('Movimientos parseados:', movs.length, 'cabecera:', cabecera)
 
       if (movs.length === 0) { showToast('No se encontraron movimientos. Verifica el formato.', 'error'); setUploading(false); return }
 
@@ -256,7 +266,8 @@ export default function Cartola() {
       loadCartolas()
       setVista('conciliacion')
     } catch (err) {
-      showToast(err.message, 'error')
+      console.error('ERROR en handleFile:', err)
+      showToast('Error al cargar: ' + (err?.message || 'desconocido'), 'error')
     }
     setUploading(false)
   }
