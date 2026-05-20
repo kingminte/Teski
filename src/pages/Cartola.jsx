@@ -496,6 +496,7 @@ export default function Cartola() {
 
       const { error: eMov } = await supabase.from('movimientos').update({
         estado: 'pendiente',
+        socio_id: null,
         monto_conciliado: 0,
         monto_pendiente: 0,
       }).eq('id', mov.id)
