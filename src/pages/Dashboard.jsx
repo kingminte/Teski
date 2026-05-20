@@ -105,7 +105,7 @@ export default function Dashboard() {
 
     // Calcular stats
     // Estados (alDia/parcial/sinPago) se basan SOLO en cuota social (excluye incorporación)
-    const esCuota = (p) => !p.concepto || !p.concepto.toLowerCase().includes('incorpora')
+    const esCuota = (p) => !p.concepto || p.concepto.toLowerCase().includes('cuota')
     const pagosPorSocioCuota = {}
     ;(pagos || []).forEach(p => {
       if (esCuota(p)) pagosPorSocioCuota[p.socio_id] = (pagosPorSocioCuota[p.socio_id] || 0) + p.monto

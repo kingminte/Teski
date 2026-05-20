@@ -162,7 +162,7 @@ export default function Cobranza() {
     for (const p of periodos) {
       if (anioIngreso && p.anio < anioIngreso) continue
       if (s.estado === 'inactivo' && anioInactividad && anioInactividad < p.anio) continue
-      const pagosP = pagos.filter(pg => pg.socio_id === s.id && pg.periodo_id === p.id && (!pg.concepto || !pg.concepto.toLowerCase().includes('incorpora')))
+      const pagosP = pagos.filter(pg => pg.socio_id === s.id && pg.periodo_id === p.id && (!pg.concepto || pg.concepto.toLowerCase().includes('cuota')))
       const totalPagado = pagosP.reduce((t, pg) => t + pg.monto, 0)
       const pendiente = Math.max(0, p.monto - totalPagado)
       if (pendiente > 0) {

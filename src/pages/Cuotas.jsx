@@ -100,7 +100,7 @@ export default function Cuotas() {
     q.then(({ data }) => setPagosTodos(data || []))
   }, [esSocio, miSocioId, pagos])
 
-  const esPagoCuota = (p) => !p.concepto || !p.concepto.toLowerCase().includes('incorpora')
+  const esPagoCuota = (p) => !p.concepto || p.concepto.toLowerCase().includes('cuota')
 
   const calcularDeudaConsolidada = (socioId) => {
     const socio = socios.find(s => s.id === socioId)
