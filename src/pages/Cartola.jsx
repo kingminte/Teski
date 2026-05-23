@@ -404,6 +404,34 @@ export default function Cartola() {
     loadMovimientos(selectedCartola.id)
   }
 
+  const [recalculandoSaldos, setRecalculandoSaldos] = useState(false)
+
+  const handleRecalcularSaldos = async () => {
+    if (!confirm('Recalcular saldo_inicial y saldo_final de todas las cartolas a partir de sus movimientos. ¿Continuar?')) return
+    setRecalculandoSaldos(true)
+    try {
+      const { data: cartolasTodas } = await supabase.from('cartolas').select('id, mes, anio, nombre_archivo')
+      let actualizadas = 0
+      for (const c of (cartolasTodas || [])) {
+        const { data: movsAsc } = await supabase.from('movimientos').select('fecha,monto,saldo').eq('cartola_id', c.id).order('fecha', { ascending: true })
+        if (!movsAsc || movsAsc.length === 0) continue
+        const primero = movsAsc[0]
+        const ultimo = movsAsc[movsAsc.length - 1]
+        const saldoFinal = ultimo.saldo || 0
+        // saldo_inicial = saldo del primer movimiento menos su movimiento neto
+        const saldoInicial = (primero.saldo || 0) - (primero.monto || 0)
+        await supabase.from('cartolas').update({ saldo_inicial: saldoInicial, saldo_final: saldoFinal }).eq('id', c.id)
+        actualizadas++
+      }
+      showToast(`Saldos recalculados en ${actualizadas} cartola(s)`)
+      loadCartolas()
+    } catch (e) {
+      console.error('Error recalculando saldos:', e)
+      showToast('Error: ' + e.message, 'error')
+    }
+    setRecalculandoSaldos(false)
+  }
+
   const handleEliminarCartola = async () => {
     if (!selectedCartola) return
     const nombre = selectedCartola.nombre_archivo
@@ -614,6 +642,12 @@ export default function Cartola() {
             <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
               {formatearPeriodoCartola(selectedCartola)}
             </span>
+          )}
+          {editable && (
+            <button className="btn btn-sm" onClick={handleRecalcularSaldos} disabled={recalculandoSaldos}
+              title="Releer saldo_inicial y saldo_final de cada cartola desde sus movimientos">
+              {recalculandoSaldos ? <><i className="ti ti-loader"></i> Recalculando…</> : <><i className="ti ti-refresh"></i> Recalcular saldos</>}
+            </button>
           )}
           {editable && (
             <button className="btn btn-sm btn-danger" onClick={handleEliminarCartola} title="Eliminar cartola y sus movimientos">
