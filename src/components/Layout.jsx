@@ -17,6 +17,7 @@ const PATH_SECCION = {
   '/cobranza': 'cobranza',
   '/bancos': 'configuracion',
   '/reporteria': 'reporteria',
+  '/reporte-financiero': 'reporteria',
   '/usuarios': 'usuarios',
 }
 
@@ -53,6 +54,7 @@ const NAV = [
   { section: 'Configuración' },
   { path: '/bancos', icon: 'ti-building-bank', label: 'Bancos y config.' },
   { path: '/reporteria', icon: 'ti-chart-bar', label: 'Reportería' },
+  { path: '/reporte-financiero', icon: 'ti-report-money', label: 'Reporte financiero' },
   { path: '/usuarios', icon: 'ti-shield-lock', label: 'Usuarios' },
 ]
 
@@ -70,6 +72,7 @@ const PAGE_TITLES = {
   '/cobranza': 'Cobranza',
   '/bancos': 'Mantenedor de Bancos',
   '/reporteria': 'Reportería',
+  '/reporte-financiero': 'Reporte financiero',
   '/usuarios': 'Usuarios',
 }
 

@@ -13,6 +13,7 @@ import Chequera from './pages/Chequera'
 import Incorporaciones from './pages/Incorporaciones'
 import Bancos from './pages/Bancos'
 import Reporteria from './pages/Reporteria'
+import ReporteFinanciero from './pages/ReporteFinanciero'
 import Cobranza from './pages/Cobranza'
 import CuentasPorPagar from './pages/CuentasPorPagar'
 import OtrosIngresos from './pages/OtrosIngresos'
@@ -82,6 +83,7 @@ export default function App() {
           <Route path="/incorporaciones" element={<Incorporaciones />} />
           <Route path="/bancos" element={<Bancos />} />
           <Route path="/reporteria" element={<Reporteria />} />
+          <Route path="/reporte-financiero" element={<ReporteFinanciero />} />
           <Route path="/usuarios" element={<Usuarios />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
