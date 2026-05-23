@@ -76,12 +76,18 @@ export default function ReporteFinanciero() {
       const ant = mesAnterior(fechaDesde)
       const { data: cartolaAnt } = await supabase.from('cartolas')
         .select('saldo_final').eq('mes', ant.mes).eq('anio', ant.anio).limit(1).maybeSingle()
-      const saldoAnterior = cartolaAnt?.saldo_final || 0
+      let saldoAnterior = cartolaAnt?.saldo_final ?? null
+      let saldoAnteriorCalculado = false
+      if (saldoAnterior === null) {
+        saldoAnterior = 0
+        saldoAnteriorCalculado = true
+      }
 
       // Saldo final: cartola del mes de fechaHasta
       const { data: cartolaFin } = await supabase.from('cartolas')
         .select('saldo_final').eq('mes', mH).eq('anio', aH).limit(1).maybeSingle()
-      const saldoCtaCte = cartolaFin?.saldo_final || 0
+      let saldoCtaCte = cartolaFin?.saldo_final ?? null
+      let saldoCtaCteCalculado = false
 
       // Ingresos
       const cuotasSociales = pagos.filter(p => !p.concepto || p.concepto.toLowerCase().includes('cuota'))
@@ -136,12 +142,19 @@ export default function ReporteFinanciero() {
 
       const totalEgresos = Object.values(egresosAgrupados).reduce((t, g) => t + g.total, 0)
 
+      // Si no hay cartola del mes final, calcular saldo por diferencia
+      if (saldoCtaCte === null) {
+        saldoCtaCte = saldoAnterior + totalPeriodoIng - totalEgresos
+        saldoCtaCteCalculado = true
+      }
+
       setDatos({
         rango: { fechaDesde, fechaHasta, fechaInicio, fechaFin, aD, mD, aH, mH, ultimoDia },
         cuotasSociales, inscripciones, otrosIngAgrupados,
         totalCuotas, totalInscripciones, totalOtrosIng, totalPeriodoIng,
         egresosAgrupados, totalEgresos,
         saldoAnterior, saldoCtaCte,
+        saldoAnteriorCalculado, saldoCtaCteCalculado,
         totalIngresos: totalPeriodoIng + saldoAnterior,
         totalEgresosMasSaldo: totalEgresos + saldoCtaCte,
       })
@@ -360,9 +373,16 @@ export default function ReporteFinanciero() {
                 <span>Total período</span>
                 <strong style={{ color: '#5dcaa5' }}>{formatearMontoConSimbolo(datos.totalPeriodoIng)}</strong>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem 1rem', background: 'rgba(201,168,76,0.05)', fontSize: 13 }}>
-                <span style={{ color: 'var(--text-muted)' }}>MÁS: Saldo anterior</span>
-                <strong style={{ color: 'var(--gold-light)' }}>{formatearMontoConSimbolo(datos.saldoAnterior)}</strong>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem 1rem', background: 'rgba(201,168,76,0.05)', fontSize: 13, alignItems: 'center', gap: 8 }}>
+                <span style={{ color: datos.saldoAnteriorCalculado ? '#f09595' : 'var(--text-muted)' }}>
+                  MÁS: Saldo anterior
+                  {datos.saldoAnteriorCalculado && (
+                    <span style={{ fontSize: 10, marginLeft: 6, color: '#f09595', fontStyle: 'italic', fontFamily: 'sans-serif' }}>
+                      (calculado por diferencia — cartola no disponible)
+                    </span>
+                  )}
+                </span>
+                <strong style={{ color: datos.saldoAnteriorCalculado ? '#f09595' : 'var(--gold-light)' }}>{formatearMontoConSimbolo(datos.saldoAnterior)}</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.85rem 1rem', borderTop: '3px solid var(--gold)', fontWeight: 'bold', fontSize: 15, background: 'rgba(29,158,117,0.08)' }}>
                 <span>TOTAL INGRESOS</span>
@@ -388,9 +408,16 @@ export default function ReporteFinanciero() {
                 <span>Total egresos</span>
                 <strong style={{ color: '#f09595' }}>{formatearMontoConSimbolo(datos.totalEgresos)}</strong>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem 1rem', background: 'rgba(201,168,76,0.05)', fontSize: 13 }}>
-                <span style={{ color: 'var(--text-muted)' }}>MÁS: Saldo cta. cte.</span>
-                <strong style={{ color: 'var(--gold-light)' }}>{formatearMontoConSimbolo(datos.saldoCtaCte)}</strong>
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem 1rem', background: 'rgba(201,168,76,0.05)', fontSize: 13, alignItems: 'center', gap: 8 }}>
+                <span style={{ color: datos.saldoCtaCteCalculado ? '#f09595' : 'var(--text-muted)' }}>
+                  MÁS: Saldo cta. cte.
+                  {datos.saldoCtaCteCalculado && (
+                    <span style={{ fontSize: 10, marginLeft: 6, color: '#f09595', fontStyle: 'italic', fontFamily: 'sans-serif' }}>
+                      (calculado por diferencia — cartola no disponible)
+                    </span>
+                  )}
+                </span>
+                <strong style={{ color: datos.saldoCtaCteCalculado ? '#f09595' : 'var(--gold-light)' }}>{formatearMontoConSimbolo(datos.saldoCtaCte)}</strong>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.85rem 1rem', borderTop: '3px solid var(--gold)', fontWeight: 'bold', fontSize: 15, background: 'rgba(240,149,149,0.08)' }}>
                 <span>TOTAL EGRESOS + SALDO</span>
