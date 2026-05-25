@@ -141,7 +141,6 @@ export function extraerNombreDesdeDescripcion(descripcion) {
 // Formato antiguo (7 cols): encabezado "FECHA / SUCURSAL / DESCRIPCIÓN / N° DOC / CARGOS / ABONOS / SALDO", fechas DD/MM sin año.
 // Formato nuevo (5 cols): encabezado "FECHA / DETALLE / CARGOS / ABONOS / SALDO", fechas DD-MM-YYYY.
 export function parsearCartolaSantander(rows, anioDefault = null) {
-  console.log('=== PARSER SANTANDER === total filas:', rows.length)
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     if (!row) continue
@@ -149,24 +148,19 @@ export function parsearCartolaSantander(rows, anioDefault = null) {
     const r1 = String(row[1] || '').trim().toLowerCase()
     const r2 = String(row[2] || '').trim().toLowerCase()
     if (r0 === 'fecha') {
-      console.log(`Encabezado fila ${i}:`, row, '| r1:', r1, '| r2:', r2)
       if (r1.includes('sucursal') || r2.includes('descripci')) {
-        console.log('Formato detectado: ANTIGUO (7 columnas)')
         return parsearCartolaSantanderAntigua(rows, anioDefault)
       }
       if (r1.includes('detalle')) {
-        console.log('Formato detectado: NUEVO (5 columnas)')
         return parsearCartolaSantanderNueva(rows, anioDefault)
       }
     }
   }
-  console.log('Formato no detectado — fallback parser nuevo')
   return parsearCartolaSantanderNueva(rows, anioDefault)
 }
 
 // Formato antiguo (7 columnas, fecha DD/MM sin año, año en cabecera "Hasta DD/MM/YYYY")
 export function parsearCartolaSantanderAntigua(rows, anioDefault = null) {
-  console.log('Usando parser formato ANTIGUO (7 columnas)')
   const movimientos = []
   let enDatos = false
 
@@ -189,7 +183,6 @@ export function parsearCartolaSantanderAntigua(rows, anioDefault = null) {
     }
   }
   if (!anio) anio = String(new Date().getFullYear())
-  console.log('Año detectado para parser antiguo:', anio)
 
   const parsearMonto = (v) => {
     if (v === null || v === undefined || v === '') return 0
@@ -250,9 +243,7 @@ export function parsearCartolaSantanderAntigua(rows, anioDefault = null) {
       rut_detectado: rutDetectado,
       nombre_detectado: nombreDetectado,
     })
-    console.log(`Mov ${fecha} | ${descripcion.substring(0, 40)} | ${tipo} ${Math.abs(monto)}`)
   }
-  console.log('Total movimientos parser antiguo:', movimientos.length)
   return movimientos
 }
 

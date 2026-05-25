@@ -146,7 +146,6 @@ export default function Cartola() {
 
   const handleFile = async (file) => {
     if (!file) return
-    console.log('=== handleFile INICIO ===', { nombre: file.name, tamaño: file.size })
     const ext = file.name.split('.').pop().toLowerCase()
     if (!['xls','xlsx','csv'].includes(ext)) { showToast('Formato no soportado', 'error'); return }
     setUploading(true)
@@ -154,23 +153,16 @@ export default function Cartola() {
       // 1. Verificar duplicado por nombre
       const { data: existente } = await supabase.from('cartolas').select('id').eq('nombre_archivo', file.name).maybeSingle()
       if (existente) {
-        console.log('BLOQUEADO: cartola ya existe con ese nombre', existente)
         showToast(`La cartola "${file.name}" ya fue cargada anteriormente`, 'error')
         setUploading(false)
         return
       }
 
-      console.log('Leyendo archivo Excel…')
       const rows = await parseFile(file)
-      console.log('Filas leídas:', rows.length)
-      console.log('Fila 0:', rows[0])
-      console.log('Fila 20:', rows[20])
-      console.log('Fila 21:', rows[21])
 
       // 2. Detectar tipo de archivo
       const tipoArchivo = detectarTipoArchivo(file.name, rows)
       const esUltimosMovimientos = tipoArchivo === 'ultimos_movimientos'
-      console.log('Tipo archivo detectado:', tipoArchivo)
 
       // 3. Parsear según tipo
       let movs, cabecera, resumenData
@@ -179,25 +171,20 @@ export default function Cartola() {
         cabecera = extraerCabeceraUltimosMovimientos(rows)
         resumenData = null // No tiene resumen de cuenta corriente
       } else {
-        console.log('Llamando a parsearCartolaSantander…')
         movs = parsearCartolaSantander(rows)
         cabecera = extraerCabeceraCartola(rows)
         resumenData = extraerResumenCartola(rows)
       }
-      console.log('Movimientos parseados:', movs.length, 'cabecera:', cabecera)
 
       if (movs.length === 0) { showToast('No se encontraron movimientos. Verifica el formato.', 'error'); setUploading(false); return }
 
       // 4. Verificar N° de documento duplicado (solo para cartola mensual con n_doc real)
       if (!esUltimosMovimientos) {
         const nDocs = movs.filter(m => m.n_documento).map(m => m.n_documento)
-        console.log('Verificando N° doc duplicados, total:', nDocs.length, nDocs)
         if (nDocs.length > 0) {
           const { data: docsDuplicados } = await supabase.from('movimientos').select('n_documento').in('n_documento', nDocs)
-          console.log('N° doc duplicados encontrados:', docsDuplicados)
           if (docsDuplicados?.length > 0) {
             const dupes = docsDuplicados.map(d => d.n_documento).join(', ')
-            console.log('BLOQUEADO: N° doc ya existen en BD')
             showToast(`Movimientos duplicados detectados (N° doc: ${dupes}). Esta cartola ya fue registrada.`, 'error')
             setUploading(false)
             return
@@ -245,7 +232,6 @@ export default function Cartola() {
         anio = anio || deNombre.anio
       }
       const periodo = (mes && anio) ? `${anio}-${String(mes).padStart(2,'0')}` : new Date().toISOString().slice(0, 7)
-      console.log('Insertando cartola en BD…', { nombre_archivo: file.name, periodo, mes, anio, total: movsConCalce.length, tipo: tipoArchivo, ...resumenCartola })
       const { data: cartola, error } = await supabase.from('cartolas')
         .insert({
           nombre_archivo: file.name,
@@ -259,14 +245,11 @@ export default function Cartola() {
         })
         .select().single()
       if (error) { console.error('Error creando cartola:', error); throw new Error('Error creando cartola: ' + error.message) }
-      console.log('Cartola insertada:', cartola)
 
       // 8. Insertar movimientos
       const toInsert = movsConCalce.map(m => ({ ...m, cartola_id: cartola.id }))
-      console.log('Insertando', toInsert.length, 'movimientos. Primero:', toInsert[0])
       const { error: mErr } = await supabase.from('movimientos').insert(toInsert)
       if (mErr) { console.error('Error guardando movimientos:', mErr); throw new Error('Error guardando movimientos: ' + mErr.message) }
-      console.log('Movimientos insertados OK')
 
       const conCalce = movsConCalce.filter(m => m.socio_id).length
       showToast(`${esUltimosMovimientos ? 'Últimos movimientos' : 'Cartola'} cargada: ${movsConCalce.length} movimientos, ${conCalce} con calce automático`)
