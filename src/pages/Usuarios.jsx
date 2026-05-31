@@ -193,7 +193,6 @@ export default function Usuarios() {
         ;({ error } = await supabase.from('usuarios').insert(payload))
       }
       if (error) {
-        console.error('Error guardando usuario:', error)
         showToast(error.message.includes('unique') || error.code === '23505' ? 'El username ya existe' : 'Error al guardar: ' + error.message, 'error')
       } else {
         showToast(editId ? 'Usuario actualizado' : 'Usuario creado')
@@ -201,7 +200,6 @@ export default function Usuarios() {
         loadAll()
       }
     } catch (e) {
-      console.error('Excepción al guardar usuario:', e)
       showToast('Error inesperado: ' + (e?.message || 'desconocido'), 'error')
     } finally {
       setSaving(false)

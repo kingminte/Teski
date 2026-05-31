@@ -23,7 +23,7 @@ const formatearPeriodoCartola = (cartola) => {
 
 export default function Cartola() {
   const { showToast, ToastComponent } = useToast()
-  const { puedeEditar } = useAuth()
+  const { puedeEditar, user } = useAuth()
   const editable = puedeEditar('cartola')
   const fileRef = useRef()
   const [cartolas, setCartolas] = useState([])
@@ -50,6 +50,49 @@ export default function Cartola() {
   const [filtroPagosSC, setFiltroPagosSC] = useState('todos')
   const [periodoPagosSC, setPeriodoPagosSC] = useState('todos')
   const [otrosIngresosForm, setOtrosIngresosForm] = useState({})
+  const [candidatos, setCandidatos] = useState([]) // ingresos manuales sin movimiento_id, normalizados
+  const [calzando, setCalzando] = useState({}) // { movId: true } mientras corre el RPC
+
+  // Carga todos los ingresos manuales aún no conciliados (sin movimiento_id) y los
+  // normaliza a una forma común para el matcher: { tipo, id, monto, fecha, socio, concepto, detalle }.
+  const loadCandidatos = async () => {
+    const [{ data: pagos }, { data: cheques }, { data: otros }] = await Promise.all([
+      supabase.from('pagos_cuota')
+        .select('id, monto, fecha_pago, concepto, socio_id, cheque_id, socios(id,nombre,apellido,numero_socio,rut), periodos_cuota(anio)')
+        .is('movimiento_id', null),
+      supabase.from('cheques')
+        .select('id, numero, monto, fecha_deposito, fecha_documento, concepto, concepto_descripcion, socio_id, estado, socios(id,nombre,apellido,numero_socio,rut)')
+        .is('movimiento_id', null).neq('estado', 'anulado'),
+      supabase.from('otros_ingresos')
+        .select('id, monto, fecha, concepto, descripcion')
+        .is('movimiento_id', null),
+    ])
+    const norm = []
+    // Cheques ya referenciados por un pago de cuota: se calzan vía el pago (el RPC
+    // propaga el movimiento al cheque), así que no deben aparecer como candidato aparte.
+    const chequesDePago = new Set((pagos || []).map(p => p.cheque_id).filter(Boolean))
+    ;(pagos || []).forEach(p => norm.push({
+      tipo: 'pagos_cuota', id: p.id, monto: p.monto, fecha: p.fecha_pago,
+      socio: p.socios, concepto: p.concepto || 'Cuota',
+      detalle: p.periodos_cuota?.anio ? `Pago cuota ${p.periodos_cuota.anio}` : 'Pago de cuota',
+    }))
+    ;(cheques || []).forEach(c => {
+      if (chequesDePago.has(c.id)) return
+      // El RPC bloquea cheques con concepto 'cuota' (se calzan desde el flujo de cuotas).
+      if ((c.concepto || '').toLowerCase().includes('cuota')) return
+      norm.push({
+        tipo: 'cheque', id: c.id, monto: c.monto, fecha: c.fecha_deposito || c.fecha_documento,
+        socio: c.socios, concepto: c.concepto || 'Cheque',
+        detalle: `Cheque N° ${c.numero}${c.concepto_descripcion ? ' · ' + c.concepto_descripcion : ''}`,
+      })
+    })
+    ;(otros || []).forEach(o => norm.push({
+      tipo: 'otros_ingresos', id: o.id, monto: o.monto, fecha: o.fecha,
+      socio: null, concepto: o.concepto || 'Otros ingresos',
+      detalle: o.descripcion || '',
+    }))
+    setCandidatos(norm)
+  }
 
   const loadPagosSinConciliar = async () => {
     const { data } = await supabase
@@ -63,6 +106,7 @@ export default function Cartola() {
   useEffect(() => {
     loadCartolas()
     loadPagosSinConciliar()
+    loadCandidatos()
     supabase.from('socios').select('id,nombre,apellido,rut,numero_socio').order('numero_socio').then(({ data }) => setSocios(data || []))
     supabase.from('periodos_cuota').select('*').order('anio', { ascending: false }).then(({ data }) => setPeriodos(data || []))
     // Cheques EMITIDOS desde chequera (Control chequera)
@@ -122,6 +166,52 @@ export default function Cartola() {
 
   const getPagosDelMovimiento = (movId) => pagosMovimientos.filter(p => p.movimiento_id === movId)
   const getOtroIngresoDe = (movId) => otrosIngresosTodos.find(o => o.movimiento_id === movId)
+
+  // Puntúa un candidato contra un movimiento de abono. El RPC exige monto exacto,
+  // así que un monto distinto descarta el candidato (devuelve null). Sobre esa base
+  // se suman puntos por cercanía de fecha y por coincidencia de socio (id, RUT o nombre).
+  const scoreCandidato = (mov, cand) => {
+    if (cand.monto !== Math.abs(mov.monto)) return null
+    let score = 50
+    const razones = ['Monto exacto']
+
+    if (cand.fecha && mov.fecha) {
+      const dias = Math.abs((new Date(mov.fecha) - new Date(cand.fecha)) / 86400000)
+      if (dias <= 1) { score += 30; razones.push('Misma fecha') }
+      else if (dias <= 3) { score += 20; razones.push('±3 días') }
+      else if (dias <= 7) { score += 12; razones.push('±7 días') }
+      else if (dias <= 30) { score += 4 }
+    }
+
+    if (cand.socio) {
+      if (mov.socio_id && cand.socio.id === mov.socio_id) {
+        score += 35; razones.push('Socio del calce')
+      } else {
+        const rutMov = normRut(mov.rut_detectado), rutCand = normRut(cand.socio.rut)
+        if (rutMov && rutCand && rutMov === rutCand) {
+          score += 35; razones.push('RUT coincide')
+        } else {
+          const nombreMov = (mov.nombre_detectado || '').toLowerCase()
+          const apellido = (cand.socio.apellido || '').toLowerCase()
+          const nombre = (cand.socio.nombre || '').toLowerCase()
+          if (nombreMov && apellido && nombreMov.includes(apellido)) { score += 15; razones.push('Apellido similar') }
+          else if (nombreMov && nombre && nombreMov.includes(nombre)) { score += 8; razones.push('Nombre similar') }
+        }
+      }
+    }
+    return { score, razones }
+  }
+
+  // Top-5 candidatos calzables para un movimiento, ordenados por score descendente.
+  const getSugerencias = (mov) => candidatos
+    .map(cand => { const s = scoreCandidato(mov, cand); return s ? { ...cand, ...s } : null })
+    .filter(Boolean)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+
+  // Etiqueta corta por tipo de ingreso (para el chip de la sugerencia).
+  const tipoIngresoLabel = (tipo) =>
+    tipo === 'pagos_cuota' ? 'Cuota' : tipo === 'cheque' ? 'Cheque' : 'Otros ingresos'
 
   const conceptoColor = (concepto) => {
     const c = (concepto || '').toLowerCase()
@@ -244,12 +334,12 @@ export default function Cartola() {
           ...resumenCartola,
         })
         .select().single()
-      if (error) { console.error('Error creando cartola:', error); throw new Error('Error creando cartola: ' + error.message) }
+      if (error) throw new Error('Error creando cartola: ' + error.message)
 
       // 8. Insertar movimientos
       const toInsert = movsConCalce.map(m => ({ ...m, cartola_id: cartola.id }))
       const { error: mErr } = await supabase.from('movimientos').insert(toInsert)
-      if (mErr) { console.error('Error guardando movimientos:', mErr); throw new Error('Error guardando movimientos: ' + mErr.message) }
+      if (mErr) throw new Error('Error guardando movimientos: ' + mErr.message)
 
       const conCalce = movsConCalce.filter(m => m.socio_id).length
       showToast(`${esUltimosMovimientos ? 'Últimos movimientos' : 'Cartola'} cargada: ${movsConCalce.length} movimientos, ${conCalce} con calce automático`)
@@ -409,7 +499,6 @@ export default function Cartola() {
       showToast(`Saldos recalculados en ${actualizadas} cartola(s)`)
       loadCartolas()
     } catch (e) {
-      console.error('Error recalculando saldos:', e)
       showToast('Error: ' + e.message, 'error')
     }
     setRecalculandoSaldos(false)
@@ -435,10 +524,10 @@ export default function Cartola() {
         estado: 'conciliado',
         chequera_detalle_id: chequeId,
       }).eq('id', movId)
-      if (e1) { console.error('Error vinculando movimiento:', e1); showToast('Error al vincular movimiento: ' + e1.message, 'error'); return }
+      if (e1) { showToast('Error al vincular movimiento: ' + e1.message, 'error'); return }
 
       const { error: e2 } = await supabase.from('chequera_detalle').update({ estado: 'cobrado' }).eq('id', chequeId)
-      if (e2) { console.error('Error actualizando cheque:', e2); showToast('Error al actualizar cheque: ' + e2.message, 'error'); return }
+      if (e2) { showToast('Error al actualizar cheque: ' + e2.message, 'error'); return }
 
       showToast('Egreso vinculado al cheque correctamente')
       loadMovimientos(selectedCartola.id)
@@ -543,17 +632,57 @@ export default function Cartola() {
     }
   }
 
+  // Calza un movimiento de abono con un ingreso manual sugerido. Toda la operación
+  // (marcar el ingreso, propagar cheque, marcar el movimiento) corre en el RPC dentro
+  // de una sola transacción.
+  const handleCalzarSugerencia = async (mov, cand) => {
+    setCalzando(prev => ({ ...prev, [mov.id]: true }))
+    try {
+      const { error } = await supabase.rpc('calzar_movimiento_con_ingreso', {
+        p_movimiento_id: mov.id,
+        p_tipo_ingreso: cand.tipo,
+        p_ingreso_id: cand.id,
+        p_usuario_id: user?.id || null,
+      })
+      if (error) throw new Error(error.message)
+      showToast(`Movimiento calzado con ${tipoIngresoLabel(cand.tipo).toLowerCase()}`)
+      loadMovimientos(selectedCartola.id)
+      loadCandidatos()
+      loadPagosSinConciliar()
+    } catch (e) {
+      showToast('Error al calzar: ' + e.message, 'error')
+    }
+    setCalzando(prev => { const n = { ...prev }; delete n[mov.id]; return n })
+  }
+
+  const handleIgnorarMovimiento = async (mov) => {
+    if (!confirm('¿Marcar este movimiento como ignorado? No volverá a aparecer entre los pendientes de conciliación.')) return
+    const { error } = await supabase.from('movimientos').update({ estado: 'ignorado' }).eq('id', mov.id)
+    if (error) { showToast('Error al ignorar: ' + error.message, 'error'); return }
+    showToast('Movimiento ignorado')
+    loadMovimientos(selectedCartola.id)
+  }
+
+  const handleReactivarMovimiento = async (mov) => {
+    const { error } = await supabase.from('movimientos').update({ estado: 'pendiente' }).eq('id', mov.id)
+    if (error) { showToast('Error al reactivar: ' + error.message, 'error'); return }
+    showToast('Movimiento reactivado')
+    loadMovimientos(selectedCartola.id)
+  }
+
   const abonos = movimientos.filter(m => m.tipo === 'abono')
   const conCalce = abonos.filter(m => m.socio_id)
   const confirmados = abonos.filter(m => m.estado === 'conciliado')
-  const pendientes = conCalce.filter(m => m.estado !== 'conciliado')
-  const sinCalce = abonos.filter(m => !m.socio_id && m.estado !== 'conciliado')
+  const pendientes = conCalce.filter(m => m.estado !== 'conciliado' && m.estado !== 'ignorado')
+  const sinCalce = abonos.filter(m => !m.socio_id && m.estado !== 'conciliado' && m.estado !== 'ignorado')
+  const ignorados = abonos.filter(m => m.estado === 'ignorado')
 
   const filtrados = movimientos.filter(m => {
     if (filtro === 'abonos') return m.tipo === 'abono'
-    if (filtro === 'pendientes') return m.tipo === 'abono' && m.estado !== 'conciliado'
+    if (filtro === 'pendientes') return m.tipo === 'abono' && m.estado !== 'conciliado' && m.estado !== 'ignorado'
     if (filtro === 'conciliados') return m.estado === 'conciliado'
-    if (filtro === 'sin_calce') return m.tipo === 'abono' && !m.socio_id && m.estado !== 'conciliado'
+    if (filtro === 'sin_calce') return m.tipo === 'abono' && !m.socio_id && m.estado !== 'conciliado' && m.estado !== 'ignorado'
+    if (filtro === 'ignorados') return m.tipo === 'abono' && m.estado === 'ignorado'
     return true
   })
 
@@ -705,9 +834,11 @@ export default function Cartola() {
                     </div>
 
                     {/* Caja de calce */}
-                    {mov.estado !== 'conciliado' && (() => {
+                    {mov.estado !== 'conciliado' && mov.estado !== 'ignorado' && (() => {
                       const esAlias = socioCalce && mov.rut_detectado && normRut(socioCalce.rut) !== normRut(mov.rut_detectado)
                       const mostrarSelect = !socioCalce || cambiandoAlias[mov.id]
+                      const sugerencias = getSugerencias(mov)
+                      const ocupado = !!calzando[mov.id]
                       return (
                       <>
                         {!mostrarSelect ? (
@@ -773,6 +904,51 @@ export default function Cartola() {
                             </div>
                           </div>
                         ) : null}
+
+                        {/* Sugerencias de ingresos manuales que calzan con este movimiento */}
+                        {editable && !c.abierto && !otrosIngresosForm[mov.id]?.abierto && sugerencias.length > 0 && (
+                          <div style={{ background: 'rgba(55,138,221,0.06)', border: '0.5px solid rgba(55,138,221,0.3)', borderRadius: 8, padding: '0.75rem 0.9rem', marginBottom: 8 }}>
+                            <div style={{ fontSize: 12, fontWeight: 500, color: '#85b7eb', display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                              <i className="ti ti-wand" style={{ fontSize: 16 }}></i>
+                              Ingresos manuales que calzan ({sugerencias.length})
+                            </div>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                              {sugerencias.map(sug => (
+                                <div key={`${sug.tipo}-${sug.id}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: 'rgba(10,22,40,0.4)', border: '0.5px solid var(--border)', borderRadius: 6, padding: '0.5rem 0.75rem' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                                    <span style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, padding: '2px 7px', borderRadius: 4, flexShrink: 0, ...conceptoColor(sug.concepto) }}>
+                                      {tipoIngresoLabel(sug.tipo)}
+                                    </span>
+                                    <div style={{ minWidth: 0 }}>
+                                      <div style={{ fontSize: 12, color: '#c8d0dc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {sug.socio ? `${sug.socio.nombre} ${sug.socio.apellido}` : sug.concepto}
+                                        {sug.fecha && <span style={{ color: 'var(--text-dim)', fontFamily: 'sans-serif' }}> · {sug.fecha.split('-').reverse().join('/')}</span>}
+                                      </div>
+                                      <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                        {sug.detalle || sug.concepto} · {sug.razones.join(' · ')}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <button className="btn btn-sm btn-primary" style={{ flexShrink: 0 }} disabled={ocupado}
+                                    onClick={() => handleCalzarSugerencia(mov, sug)}>
+                                    {ocupado ? <i className="ti ti-loader"></i> : <><i className="ti ti-link"></i> Calzar</>}
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Ignorar este movimiento */}
+                        {editable && !c.abierto && !otrosIngresosForm[mov.id]?.abierto && (
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+                            <button className="btn btn-sm" style={{ color: 'var(--text-muted)', fontSize: 11 }}
+                              onClick={() => handleIgnorarMovimiento(mov)}
+                              title="Marcar como ignorado — no aparecerá entre los pendientes">
+                              <i className="ti ti-eye-off"></i> Ignorar movimiento
+                            </button>
+                          </div>
+                        )}
 
                         {/* Formulario de otros ingresos */}
                         {editable && otrosIngresosForm[mov.id]?.abierto && (
@@ -925,6 +1101,21 @@ export default function Cartola() {
                       </>
                       )
                     })()}
+
+                    {/* Ignorado */}
+                    {mov.estado === 'ignorado' && (
+                      <div style={{ background: 'rgba(127,140,158,0.1)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.6rem 0.9rem', fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <i className="ti ti-eye-off" style={{ fontSize: 16 }}></i>
+                          Movimiento ignorado · <strong>{formatearMontoConSimbolo(mov.monto)}</strong>
+                        </div>
+                        {editable && (
+                          <button className="btn btn-sm" style={{ fontSize: 11 }} onClick={() => handleReactivarMovimiento(mov)}>
+                            <i className="ti ti-arrow-back-up"></i> Reactivar
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     {/* Conciliado */}
                     {mov.estado === 'conciliado' && !mov.socio_id && (() => {
@@ -1305,9 +1496,9 @@ export default function Cartola() {
             <div className="card-header">
               <div className="card-title"><i className="ti ti-list"></i> Movimientos — {formatearPeriodoCartola(selectedCartola)}</div>
               <div style={{ display: 'flex', gap: 8 }}>
-                {['todos','abonos','pendientes','conciliados','sin_calce'].map(f => (
+                {['todos','abonos','pendientes','conciliados','sin_calce','ignorados'].map(f => (
                   <button key={f} className={`btn btn-sm${filtro === f ? ' btn-primary' : ''}`} onClick={() => setFiltro(f)}>
-                    {f === 'todos' ? 'Todos' : f === 'abonos' ? 'Abonos' : f === 'pendientes' ? 'Pendientes' : f === 'conciliados' ? 'Conciliados' : 'Sin calce'}
+                    {f === 'todos' ? 'Todos' : f === 'abonos' ? 'Abonos' : f === 'pendientes' ? 'Pendientes' : f === 'conciliados' ? 'Conciliados' : f === 'sin_calce' ? 'Sin calce' : 'Ignorados'}
                   </button>
                 ))}
               </div>

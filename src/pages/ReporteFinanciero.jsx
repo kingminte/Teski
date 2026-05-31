@@ -159,7 +159,6 @@ export default function ReporteFinanciero() {
         totalEgresosMasSaldo: totalEgresos + saldoCtaCte,
       })
     } catch (e) {
-      console.error('Error generando reporte:', e)
       showToast('Error: ' + e.message, 'error')
     }
     setLoading(false)

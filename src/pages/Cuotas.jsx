@@ -38,12 +38,23 @@ export default function Cuotas() {
 
   useEffect(() => {
     loadPeriodos()
-    supabase.from('cheques').select('id,numero,monto,estado,concepto,fecha_deposito').eq('estado','por_depositar').eq('concepto','cuota_social').then(({ data }) => setCheques(data || []))
+    supabase.from('cheques').select('id,numero,monto,estado,concepto,fecha_deposito,fecha_documento').eq('estado','por_depositar').eq('concepto','cuota_social').then(({ data }) => setCheques(data || []))
   }, [])
 
   useEffect(() => {
     if (!esSocio || !miSocioId) { setMisCheques([]); return }
-    supabase.from('cheques').select('*').eq('socio_id', miSocioId).order('fecha_deposito', { ascending: true }).then(({ data }) => setMisCheques(data || []))
+    supabase.from('cheques').select('*').eq('socio_id', miSocioId).then(({ data }) => {
+      // Orden por fecha efectiva (fecha_deposito ?? fecha_documento), ascendente, nulls al final.
+      const ef = (c) => c.fecha_deposito || c.fecha_documento || ''
+      const ordenados = (data || []).slice().sort((a, b) => {
+        const fa = ef(a), fb = ef(b)
+        if (fa && fb) return fa < fb ? -1 : fa > fb ? 1 : 0
+        if (fa) return -1
+        if (fb) return 1
+        return 0
+      })
+      setMisCheques(ordenados)
+    })
   }, [esSocio, miSocioId])
 
   const loadSocios = async () => {
@@ -140,7 +151,7 @@ export default function Cuotas() {
     setLoading(true)
     const { data } = await supabase
       .from('pagos_cuota')
-      .select('*, socios(nombre,apellido,numero_socio), cheques(id,numero,fecha_deposito,estado)')
+      .select('*, socios(nombre,apellido,numero_socio), cheques(id,numero,fecha_deposito,fecha_documento,estado), movimientos(descripcion)')
       .eq('periodo_id', periodoId)
       .order('fecha_pago', { ascending: false })
     setPagos(data || [])
@@ -184,6 +195,15 @@ export default function Cuotas() {
 
   const handleRegistrarPago = async () => {
     if (!formPago.monto || !formPago.fecha_pago) { showToast('Monto y fecha son obligatorios', 'error'); return }
+
+    const fechaPago = new Date(formPago.fecha_pago + 'T00:00:00')
+    const hoy = new Date()
+    hoy.setHours(0, 0, 0, 0)
+    if (fechaPago > hoy) {
+      const [y, m, d] = formPago.fecha_pago.split('-')
+      if (!confirm(`La fecha del pago es ${d}/${m}/${y} (posterior a hoy). ¿Confirmás que es correcta?`)) return
+    }
+
     setSaving(true)
     const payload = {
       socio_id: selectedSocio.id,
@@ -606,9 +626,18 @@ export default function Cuotas() {
                                                   ? { background: 'rgba(55,138,221,0.15)', color: '#85b7eb' }
                                                   : { background: 'rgba(175,169,236,0.15)', color: '#afa9ec' }
                                               return (
-                                                <span style={{ display: 'inline-flex', padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 500, ...style }}>
-                                                  {concepto}
-                                                </span>
+                                                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                                                  <span style={{ display: 'inline-flex', padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 500, ...style }}>
+                                                    {concepto}
+                                                  </span>
+                                                  {p.movimiento_id && (
+                                                    <span
+                                                      title={p.movimientos?.descripcion || p.comentario || 'Conciliado con la cartola bancaria'}
+                                                      style={{ display: 'inline-flex', alignItems: 'center', gap: 3, padding: '2px 7px', borderRadius: 4, fontSize: 10, fontWeight: 500, background: 'rgba(29,158,117,0.15)', color: '#5dcaa5', cursor: 'help' }}>
+                                                      <i className="ti ti-building-bank" style={{ fontSize: 11 }}></i> En cartola bancaria
+                                                    </span>
+                                                  )}
+                                                </div>
                                               )
                                             })()}
                                           </td>
@@ -623,7 +652,12 @@ export default function Cuotas() {
                                               <div>
                                                 <div style={{ color: 'var(--gold)', fontWeight: 'bold' }}>N°{p.cheques.numero}</div>
                                                 <div style={{ color: 'var(--text-dim)', fontSize: 11 }}>
-                                                  Depósito: {p.cheques.fecha_deposito ? p.cheques.fecha_deposito.split('-').reverse().join('/') : 'Sin fecha'}
+                                                  {(() => {
+                                                    const f = p.cheques.fecha_deposito || p.cheques.fecha_documento
+                                                    if (!f) return 'Depósito: Sin fecha'
+                                                    const txt = f.split('-').reverse().join('/')
+                                                    return p.cheques.fecha_deposito ? `Depósito: ${txt}` : `A fecha: ${txt}`
+                                                  })()}
                                                 </div>
                                                 <span className={`badge ${p.cheques.estado === 'depositado' ? 'badge-active' : 'badge-pending'}`} style={{ fontSize: 10 }}>
                                                   {p.cheques.estado === 'depositado' ? 'Depositado' : 'Por depositar'}
@@ -632,7 +666,7 @@ export default function Cuotas() {
                                             ) : '—'}
                                           </td>
                                           <td style={{ padding: '6px 10px', fontSize: 12, color: 'var(--text-muted)' }}>
-                                            {p.comentario || '—'}
+                                            {p.comentario && !p.comentario.startsWith('Conciliado desde cartola') ? p.comentario : '—'}
                                           </td>
                                           <td style={{ padding: '6px 10px' }}>
                                             {editable && (
@@ -766,7 +800,12 @@ export default function Cuotas() {
                             <td><span className="chip">{c.numero}</span></td>
                             <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>{formatearMontoConSimbolo(c.monto)}</td>
                             <td style={{ color: 'var(--text-muted)' }}>
-                              {c.fecha_deposito ? c.fecha_deposito.split('-').reverse().join('/') : '—'}
+                              {(() => {
+                                const f = c.fecha_deposito || c.fecha_documento
+                                if (!f) return '—'
+                                const txt = f.split('-').reverse().join('/')
+                                return c.fecha_deposito ? txt : `${txt} *`
+                              })()}
                             </td>
                             <td style={{ color: 'var(--text-muted)' }}>{c.banco_destino || c.banco_emisor || '—'}</td>
                             <td>
@@ -863,7 +902,7 @@ export default function Cuotas() {
                       .filter(c => !pagos.some(p => p.cheque_id === c.id))
                       .map(c => (
                         <option key={c.id} value={c.id}>
-                          N°{c.numero} — {formatearMontoConSimbolo(c.monto)}{c.fecha_deposito ? ` · Depósito: ${c.fecha_deposito.split('-').reverse().join('/')}` : ''}
+                          N°{c.numero} — {formatearMontoConSimbolo(c.monto)}{(c.fecha_deposito || c.fecha_documento) ? ` · ${c.fecha_deposito ? 'Depósito' : 'A fecha'}: ${(c.fecha_deposito || c.fecha_documento).split('-').reverse().join('/')}` : ''}
                         </option>
                       ))
                     }

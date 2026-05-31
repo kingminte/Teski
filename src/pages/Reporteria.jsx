@@ -159,7 +159,7 @@ export default function Reporteria() {
       const chRows = [['N° Cheque', 'Monto', 'Concepto', 'F. depósito', 'Banco destino', 'Estado']]
       chequesSocio.forEach(c => chRows.push([
         c.numero, c.monto, c.concepto,
-        c.fecha_deposito ? c.fecha_deposito.split('-').reverse().join('/') : '',
+        (c.fecha_deposito || c.fecha_documento) ? (c.fecha_deposito || c.fecha_documento).split('-').reverse().join('/') : '',
         c.banco_destino || '', c.estado,
       ]))
       XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(chRows), 'Cheques')
@@ -412,7 +412,7 @@ export default function Reporteria() {
                               <td><span className="chip">{c.numero}</span></td>
                               <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>{formatearMontoConSimbolo(c.monto)}</td>
                               <td style={{ color: 'var(--text-muted)' }}>{c.banco_destino || '—'}</td>
-                              <td style={{ color: 'var(--text-muted)' }}>{c.fecha_deposito ? c.fecha_deposito.split('-').reverse().join('/') : '—'}</td>
+                              <td style={{ color: 'var(--text-muted)' }}>{(c.fecha_deposito || c.fecha_documento) ? (c.fecha_deposito || c.fecha_documento).split('-').reverse().join('/') : '—'}</td>
                               <td>
                                 {c.estado === 'depositado' && <span className="badge badge-active">Depositado</span>}
                                 {c.estado === 'por_depositar' && <span className="badge badge-pending">Por depositar</span>}
@@ -483,7 +483,7 @@ export default function Reporteria() {
                       <td><span className="chip">{c.numero}</span></td>
                       <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>{formatearMontoConSimbolo(c.monto)}</td>
                       <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{c.concepto}</td>
-                      <td style={{ color: 'var(--text-muted)' }}>{c.fecha_deposito ? c.fecha_deposito.split('-').reverse().join('/') : '—'}</td>
+                      <td style={{ color: 'var(--text-muted)' }}>{(c.fecha_deposito || c.fecha_documento) ? (c.fecha_deposito || c.fecha_documento).split('-').reverse().join('/') : '—'}</td>
                       <td style={{ color: 'var(--text-muted)' }}>{c.banco_destino || '—'}</td>
                       <td>
                         {c.estado === 'depositado' && <span className="badge badge-active">Depositado</span>}

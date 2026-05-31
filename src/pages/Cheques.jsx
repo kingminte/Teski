@@ -14,7 +14,7 @@ const CONCEPTOS = [
 const EMPTY_FORM = {
   numero: '', socio_id: '', emisor: '', banco_emisor: 'Banco Estado',
   monto: '', concepto: 'cuota_social', concepto_descripcion: '',
-  fecha_deposito: '', banco_destino: 'Banco Estado', comentario: '',
+  fecha_recepcion: '', fecha_documento: '', banco_destino: 'Banco Estado', comentario: '',
 }
 
 export default function Cheques() {
@@ -50,21 +50,32 @@ export default function Cheques() {
     const { data, error } = await supabase
       .from('cheques')
       .select('*, socios(nombre,apellido,numero_socio)')
-      .order('fecha_deposito', { ascending: true, nullsFirst: false })
       .order('numero', { ascending: false })
     if (error) console.error('Error cargando cheques:', error)
     setCheques(data || [])
     setLoading(false)
   }
 
-  // Filtros combinados
+  // Fecha efectiva del cheque: la real del banco si ya cayó (fecha_deposito),
+  // si no la "a fecha" planificada (fecha_documento).
+  const fechaEfectiva = (c) => c.fecha_deposito || c.fecha_documento || ''
+
+  // Filtros combinados + orden por fecha efectiva (planificación), nulls al final
   const filtrados = cheques
     .filter(c => filtroEstado === 'todos' || c.estado === filtroEstado)
     .filter(c => filtroSocio === '' || c.socio_id === filtroSocio)
     .filter(c => filtroConcepto === '' || c.concepto === filtroConcepto)
+    .slice()
+    .sort((a, b) => {
+      const fa = fechaEfectiva(a), fb = fechaEfectiva(b)
+      if (fa && fb) { if (fa !== fb) return fa < fb ? -1 : 1 }
+      else if (fa) return -1
+      else if (fb) return 1
+      return (b.numero || '').localeCompare(a.numero || '')
+    })
 
   const openNew = () => {
-    setForm(EMPTY_FORM)
+    setForm({ ...EMPTY_FORM, fecha_recepcion: new Date().toISOString().slice(0, 10) })
     setMontoForm('')
     setDuplicadoWarning('')
     setEditId(null)
@@ -80,7 +91,8 @@ export default function Cheques() {
       monto: c.monto ? String(c.monto) : '',
       concepto: c.concepto,
       concepto_descripcion: c.concepto_descripcion || '',
-      fecha_deposito: c.fecha_deposito || '',
+      fecha_recepcion: c.fecha_recepcion || '',
+      fecha_documento: c.fecha_documento || '',
       banco_destino: c.banco_destino || 'Banco Estado',
       comentario: c.comentario || '',
     })
@@ -124,7 +136,9 @@ export default function Cheques() {
 
   const handleAmarrar = async (chequeId) => {
     if (!movId) { showToast('Selecciona un movimiento', 'error'); return }
-    const { error } = await supabase.from('cheques').update({ movimiento_id: movId, estado: 'depositado' }).eq('id', chequeId)
+    // La fecha del banco manda: el cheque cayó en cartola en la fecha del movimiento.
+    const movFecha = movimientos.find(m => m.id === movId)?.fecha || null
+    const { error } = await supabase.from('cheques').update({ movimiento_id: movId, estado: 'depositado', fecha_deposito: movFecha }).eq('id', chequeId)
     if (error) showToast('Error al amarrar', 'error')
     else {
       await supabase.from('movimientos').update({ estado: 'conciliado' }).eq('id', movId)
@@ -152,13 +166,15 @@ export default function Cheques() {
         'Monto': c.monto,
         'Concepto': CONCEPTOS.find(x => x.value === c.concepto)?.label || c.concepto,
         'Detalle concepto': c.concepto_descripcion || '',
-        'Fecha depósito': c.fecha_deposito ? c.fecha_deposito.split('-').reverse().join('/') : '',
+        'Fecha recepción': c.fecha_recepcion ? c.fecha_recepcion.split('-').reverse().join('/') : '',
+        'Fecha documento (a fecha)': c.fecha_documento ? c.fecha_documento.split('-').reverse().join('/') : '',
+        'Fecha depósito (banco)': c.fecha_deposito ? c.fecha_deposito.split('-').reverse().join('/') : '',
         'Banco destino': c.banco_destino || '',
         'Estado': c.estado === 'por_depositar' ? 'Por depositar' : c.estado === 'depositado' ? 'Depositado' : 'Anulado',
         'Comentario': c.comentario || '',
       }))
       const ws = XLSX.utils.json_to_sheet(rows)
-      ws['!cols'] = [{ wch: 12 },{ wch: 22 },{ wch: 20 },{ wch: 16 },{ wch: 12 },{ wch: 16 },{ wch: 20 },{ wch: 14 },{ wch: 16 },{ wch: 14 },{ wch: 25 }]
+      ws['!cols'] = [{ wch: 12 },{ wch: 22 },{ wch: 20 },{ wch: 16 },{ wch: 12 },{ wch: 16 },{ wch: 20 },{ wch: 16 },{ wch: 20 },{ wch: 18 },{ wch: 16 },{ wch: 14 },{ wch: 25 }]
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, 'Cheques')
       XLSX.writeFile(wb, `Cheques_${filtroEstado}.xlsx`)
@@ -260,7 +276,13 @@ export default function Cheques() {
                       {c.concepto_descripcion && <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>{c.concepto_descripcion}</div>}
                     </td>
                     <td style={{ color: 'var(--text-muted)' }}>
-                      {c.fecha_deposito ? c.fecha_deposito.split('-').reverse().join('/') : '—'}
+                      {(() => {
+                        const f = fechaEfectiva(c)
+                        if (!f) return '—'
+                        const txt = f.split('-').reverse().join('/')
+                        // Si aún no cayó en cartola, lo mostrado es la fecha planificada (a fecha)
+                        return c.fecha_deposito ? txt : <span title="Fecha planificada (a fecha) — aún no cae en cartola">{txt} *</span>
+                      })()}
                     </td>
                     <td>{estadoBadge(c.estado)}</td>
                     <td>
@@ -374,7 +396,8 @@ export default function Cheques() {
               {form.concepto === 'otro' && (
                 <div className="form-group full"><label>Descripción concepto</label><input placeholder="Descripción…" {...F('concepto_descripcion')} /></div>
               )}
-              <div className="form-group"><label>Fecha a depositar</label><input type="date" {...F('fecha_deposito')} /></div>
+              <div className="form-group"><label>Fecha de recepción</label><input type="date" {...F('fecha_recepcion')} /></div>
+              <div className="form-group"><label>Fecha del cheque (a fecha)</label><input type="date" {...F('fecha_documento')} /></div>
               <div className="form-group">
                 <label>Banco destino</label>
                 <select {...F('banco_destino')}>
