@@ -22,9 +22,9 @@ import SociosActivos from './pages/SociosActivos'
 import CambiarClave from './pages/CambiarClave'
 import ClasesCatalogos from './pages/ClasesCatalogos'
 import ClasesConfig from './pages/ClasesConfig'
-import ClasesPlaceholder from './pages/ClasesPlaceholder'
 import SolicitarClase from './pages/SolicitarClase'
 import GestionarClases from './pages/GestionarClases'
+import ReporteClases from './pages/ReporteClases'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -94,7 +94,7 @@ export default function App() {
           <Route path="/clases/gestion" element={<GestionarClases />} />
           <Route path="/clases/catalogos" element={<ClasesCatalogos />} />
           <Route path="/clases/config" element={<ClasesConfig />} />
-          <Route path="/clases/reporte" element={<ClasesPlaceholder />} />
+          <Route path="/clases/reporte" element={<ReporteClases />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>

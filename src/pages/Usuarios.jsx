@@ -31,7 +31,7 @@ const SECCIONES = [
   { id: 'usuarios', label: 'Usuarios', icon: 'ti-shield-lock' },
   { id: 'clases_solicitar', label: 'Clases · Solicitar', icon: 'ti-ski-jumping' },
   { id: 'clases_gestion', label: 'Clases · Gestión', icon: 'ti-clipboard-list' },
-  { id: 'clases_catalogos', label: 'Clases · Catálogos', icon: 'ti-list-details' },
+  { id: 'clases_catalogos', label: 'Clases · Gestión Escuela', icon: 'ti-list-details' },
   { id: 'clases_config', label: 'Clases · Configuración', icon: 'ti-adjustments' },
   { id: 'clases_reporte', label: 'Clases · Reporte', icon: 'ti-report-money' },
 ]

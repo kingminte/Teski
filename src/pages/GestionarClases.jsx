@@ -247,7 +247,7 @@ export default function GestionarClases() {
   if (disponibilidad.length === 0 && !loading) {
     return (
       <div className="card">
-        <div className="empty-state"><i className="ti ti-calendar-off"></i>No hay fechas de disponibilidad publicadas. Publicá fechas en Catálogos → Disponibilidad.</div>
+        <div className="empty-state"><i className="ti ti-calendar-off"></i>No hay fechas de disponibilidad publicadas. Publicá fechas en Gestión Escuela → Disponibilidad.</div>
       </div>
     )
   }

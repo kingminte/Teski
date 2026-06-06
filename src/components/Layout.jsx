@@ -59,7 +59,7 @@ const NAV = [
   { section: 'Clases de esquí' },
   { path: '/clases/solicitar', icon: 'ti-ski-jumping', label: 'Solicitar clase' },
   { path: '/clases/gestion', icon: 'ti-clipboard-list', label: 'Gestionar clases' },
-  { path: '/clases/catalogos', icon: 'ti-list-details', label: 'Catálogos' },
+  { path: '/clases/catalogos', icon: 'ti-list-details', label: 'Gestión Escuela' },
   { path: '/clases/config', icon: 'ti-adjustments', label: 'Configuración clases' },
   { path: '/clases/reporte', icon: 'ti-report-money', label: 'Reporte mensual' },
   { section: 'Configuración' },
@@ -87,7 +87,7 @@ const PAGE_TITLES = {
   '/usuarios': 'Usuarios',
   '/clases/solicitar': 'Solicitar clase de esquí',
   '/clases/gestion': 'Gestión de clases',
-  '/clases/catalogos': 'Clases de esquí — Catálogos',
+  '/clases/catalogos': 'Clases de esquí — Gestión Escuela',
   '/clases/config': 'Clases de esquí — Configuración',
   '/clases/reporte': 'Clases de esquí — Reporte mensual',
 }
