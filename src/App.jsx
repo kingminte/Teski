@@ -23,6 +23,8 @@ import CambiarClave from './pages/CambiarClave'
 import ClasesCatalogos from './pages/ClasesCatalogos'
 import ClasesConfig from './pages/ClasesConfig'
 import ClasesPlaceholder from './pages/ClasesPlaceholder'
+import SolicitarClase from './pages/SolicitarClase'
+import GestionarClases from './pages/GestionarClases'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -88,8 +90,8 @@ export default function App() {
           <Route path="/reporteria" element={<Reporteria />} />
           <Route path="/reporte-financiero" element={<ReporteFinanciero />} />
           <Route path="/usuarios" element={<Usuarios />} />
-          <Route path="/clases/solicitar" element={<ClasesPlaceholder />} />
-          <Route path="/clases/gestion" element={<ClasesPlaceholder />} />
+          <Route path="/clases/solicitar" element={<SolicitarClase />} />
+          <Route path="/clases/gestion" element={<GestionarClases />} />
           <Route path="/clases/catalogos" element={<ClasesCatalogos />} />
           <Route path="/clases/config" element={<ClasesConfig />} />
           <Route path="/clases/reporte" element={<ClasesPlaceholder />} />
