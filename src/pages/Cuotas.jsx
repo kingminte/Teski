@@ -35,6 +35,7 @@ export default function Cuotas() {
   const [exportando, setExportando] = useState(false)
   const [misCheques, setMisCheques] = useState([])
   const [pagosTodos, setPagosTodos] = useState([])
+  const [miSocio, setMiSocio] = useState(null)   // registro propio (fecha_ingreso) sin filtrar por período
 
   useEffect(() => {
     loadPeriodos()
@@ -55,6 +56,15 @@ export default function Cuotas() {
       })
       setMisCheques(ordenados)
     })
+  }, [esSocio, miSocioId])
+
+  // Registro propio del socio (fecha_ingreso) sin filtrar por período: lo usa el
+  // resumen de deuda consolidada, que es multi-año y no debe depender de la lista
+  // `socios` (esa sí viene filtrada por el período seleccionado).
+  useEffect(() => {
+    if (!esSocio || !miSocioId) { setMiSocio(null); return }
+    supabase.from('socios').select('id,fecha_ingreso').eq('id', miSocioId).maybeSingle()
+      .then(({ data }) => setMiSocio(data || null))
   }, [esSocio, miSocioId])
 
   const loadSocios = async () => {
@@ -114,7 +124,7 @@ export default function Cuotas() {
   const esPagoCuota = (p) => !p.concepto || p.concepto.toLowerCase().includes('cuota')
 
   const calcularDeudaConsolidada = (socioId) => {
-    const socio = socios.find(s => s.id === socioId)
+    const socio = socios.find(s => s.id === socioId) || (miSocio?.id === socioId ? miSocio : null)
     const anioIngreso = socio?.fecha_ingreso ? parseInt(socio.fecha_ingreso.slice(0, 4)) : null
     const rows = []
     for (const p of periodos) {
@@ -714,7 +724,7 @@ export default function Cuotas() {
                 <div className="card-title"><i className="ti ti-clock"></i> {esSocio ? 'Mi historial de pagos' : 'Historial de pagos'} — {selectedPeriodo.anio}</div>
               </div>
               <table>
-                <thead><tr>{!esSocio && <th>Socio</th>}<th>Fecha</th><th>Monto</th><th>Forma pago</th><th>Comentario</th><th></th></tr></thead>
+                <thead><tr>{!esSocio && <th>Socio</th>}<th>Fecha</th><th>Monto</th><th>Concepto</th><th>Forma pago</th><th>Comentario</th><th></th></tr></thead>
                 <tbody>
                   {pagosVisibles.map(p => (
                     <tr key={p.id}>
@@ -728,6 +738,7 @@ export default function Cuotas() {
                       )}
                       <td style={{ color: 'var(--text-muted)' }}>{new Date(p.fecha_pago).toLocaleDateString('es-CL')}</td>
                       <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>${p.monto.toLocaleString('es-CL')}</td>
+                      <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{p.concepto || '—'}</td>
                       <td>
                         <span className="chip">{FORMAS_PAGO.find(f => f.value === p.forma_pago)?.label || p.forma_pago}</span>
                       </td>
