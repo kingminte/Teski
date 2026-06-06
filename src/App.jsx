@@ -20,6 +20,9 @@ import OtrosIngresos from './pages/OtrosIngresos'
 import Usuarios from './pages/Usuarios'
 import SociosActivos from './pages/SociosActivos'
 import CambiarClave from './pages/CambiarClave'
+import ClasesCatalogos from './pages/ClasesCatalogos'
+import ClasesConfig from './pages/ClasesConfig'
+import ClasesPlaceholder from './pages/ClasesPlaceholder'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -85,6 +88,11 @@ export default function App() {
           <Route path="/reporteria" element={<Reporteria />} />
           <Route path="/reporte-financiero" element={<ReporteFinanciero />} />
           <Route path="/usuarios" element={<Usuarios />} />
+          <Route path="/clases/solicitar" element={<ClasesPlaceholder />} />
+          <Route path="/clases/gestion" element={<ClasesPlaceholder />} />
+          <Route path="/clases/catalogos" element={<ClasesCatalogos />} />
+          <Route path="/clases/config" element={<ClasesConfig />} />
+          <Route path="/clases/reporte" element={<ClasesPlaceholder />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>

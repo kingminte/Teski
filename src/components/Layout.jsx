@@ -19,6 +19,11 @@ const PATH_SECCION = {
   '/reporteria': 'reporteria',
   '/reporte-financiero': 'reporteria',
   '/usuarios': 'usuarios',
+  '/clases/solicitar': 'clases_solicitar',
+  '/clases/gestion': 'clases_gestion',
+  '/clases/catalogos': 'clases_catalogos',
+  '/clases/config': 'clases_config',
+  '/clases/reporte': 'clases_reporte',
 }
 
 const ROL_META = {
@@ -51,6 +56,12 @@ const NAV = [
   { path: '/cuentas-por-pagar', icon: 'ti-file-invoice', label: 'Cuentas por pagar' },
   { path: '/otros-ingresos', icon: 'ti-coin', label: 'Otros ingresos' },
   { path: '/cobranza', icon: 'ti-mail-forward', label: 'Cobranza' },
+  { section: 'Clases de esquí' },
+  { path: '/clases/solicitar', icon: 'ti-ski-jumping', label: 'Solicitar clase' },
+  { path: '/clases/gestion', icon: 'ti-clipboard-list', label: 'Gestionar clases' },
+  { path: '/clases/catalogos', icon: 'ti-list-details', label: 'Catálogos' },
+  { path: '/clases/config', icon: 'ti-adjustments', label: 'Configuración clases' },
+  { path: '/clases/reporte', icon: 'ti-report-money', label: 'Reporte mensual' },
   { section: 'Configuración' },
   { path: '/bancos', icon: 'ti-building-bank', label: 'Bancos y config.' },
   { path: '/reporteria', icon: 'ti-chart-bar', label: 'Reportería' },
@@ -74,6 +85,11 @@ const PAGE_TITLES = {
   '/reporteria': 'Reportería',
   '/reporte-financiero': 'Reporte financiero',
   '/usuarios': 'Usuarios',
+  '/clases/solicitar': 'Solicitar clase de esquí',
+  '/clases/gestion': 'Gestión de clases',
+  '/clases/catalogos': 'Clases de esquí — Catálogos',
+  '/clases/config': 'Clases de esquí — Configuración',
+  '/clases/reporte': 'Clases de esquí — Reporte mensual',
 }
 
 export default function Layout({ children }) {
