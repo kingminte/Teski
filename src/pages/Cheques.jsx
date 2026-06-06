@@ -153,6 +153,44 @@ export default function Cheques() {
     else { showToast('Estado actualizado'); load() }
   }
 
+  // Revierte un cheque 'depositado' → 'por_depositar'. Solo si NO tiene
+  // vinculaciones (movimiento bancario o pago de cuota); si las tiene, bloquea.
+  const handleRevertirADepositar = async () => {
+    const cheque = cheques.find(c => c.id === editId)
+    if (!cheque) return
+
+    // Paso 1 — verificación de vinculaciones (antes de confirmar)
+    if (cheque.movimiento_id) {
+      showToast('No se puede revertir: este cheque está conciliado con un movimiento bancario. Para revertir, primero hay que descalzar el movimiento desde la pantalla de Cartola Bancaria.', 'error')
+      return
+    }
+    const { data: pagos, error: ePagos } = await supabase
+      .from('pagos_cuota').select('id, socios(nombre,apellido)').eq('cheque_id', editId)
+    if (ePagos) { showToast('Error al verificar vinculaciones: ' + ePagos.message, 'error'); return }
+    if (pagos && pagos.length > 0) {
+      const s = pagos[0].socios
+      const nombre = s ? `${s.nombre} ${s.apellido}` : 'un socio'
+      showToast(`No se puede revertir: este cheque está asociado al pago de cuota de ${nombre}. Para revertir, primero hay que eliminar ese pago de cuota desde la pantalla de Cuotas.`, 'error')
+      return
+    }
+
+    // Paso 2 — confirmación
+    const quien = cheque.emisor || (cheque.socios ? `${cheque.socios.nombre} ${cheque.socios.apellido}` : '—')
+    if (!confirm(`El cheque N°${cheque.numero} de ${quien} pasará de 'Depositado' a 'Por depositar'. Su fecha de depósito se limpiará. ¿Continuar?`)) return
+
+    // Paso 3 — ejecución (solo cheques; movimiento_id ya verificado null)
+    const { error } = await supabase.from('cheques').update({
+      estado: 'por_depositar',
+      fecha_deposito: null,
+      conciliado_en: null,
+      conciliado_por: null,
+    }).eq('id', editId)
+    if (error) { showToast('Error al revertir: ' + error.message, 'error'); return }
+    showToast("Cheque revertido a 'Por depositar'")
+    setShowModal(false)
+    load()
+  }
+
   const handleExportar = async () => {
     if (filtrados.length === 0) { showToast('No hay datos para exportar', 'error'); return }
     setExportando(true)
@@ -406,11 +444,21 @@ export default function Cheques() {
               </div>
               <div className="form-group full"><label>Comentario</label><input placeholder="Notas opcionales" {...F('comentario')} /></div>
             </div>
-            <div className="modal-footer">
-              <button className="btn" onClick={() => setShowModal(false)}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleSave} disabled={saving || !!duplicadoWarning}>
-                {saving ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-check"></i> {editId ? 'Guardar cambios' : 'Registrar cheque'}</>}
-              </button>
+            <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
+              <div>
+                {editId && cheques.find(c => c.id === editId)?.estado === 'depositado' && (
+                  <button className="btn" style={{ color: '#fac775', borderColor: 'rgba(239,159,39,0.4)' }}
+                    onClick={handleRevertirADepositar}>
+                    <i className="ti ti-arrow-back-up"></i> Volver a 'Por depositar'
+                  </button>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn" onClick={() => setShowModal(false)}>Cancelar</button>
+                <button className="btn btn-primary" onClick={handleSave} disabled={saving || !!duplicadoWarning}>
+                  {saving ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-check"></i> {editId ? 'Guardar cambios' : 'Registrar cheque'}</>}
+                </button>
+              </div>
             </div>
           </div>
         </div>
