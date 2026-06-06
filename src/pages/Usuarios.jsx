@@ -34,6 +34,7 @@ const SECCIONES = [
   { id: 'clases_catalogos', label: 'Clases · Gestión Escuela', icon: 'ti-list-details' },
   { id: 'clases_config', label: 'Clases · Configuración', icon: 'ti-adjustments' },
   { id: 'clases_reporte', label: 'Clases · Reporte', icon: 'ti-report-money' },
+  { id: 'beneficios', label: 'Beneficios', icon: 'ti-gift' },
 ]
 
 const DESCRIPCION_ROLES = [
