@@ -28,6 +28,9 @@ import ReporteClases from './pages/ReporteClases'
 import Beneficios from './pages/Beneficios'
 import Comunicaciones from './pages/Comunicaciones'
 import ArchivosDirectorio from './pages/ArchivosDirectorio'
+import MiCredencial from './pages/MiCredencial'
+import Credenciales from './pages/Credenciales'
+import CredencialPublica from './pages/CredencialPublica'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -54,6 +57,16 @@ export default function App() {
     }, 5 * 60 * 1000)
     return () => clearInterval(interval)
   }, [user])
+
+  // Ruta pública sin auth: credencial validable por QR. Va ANTES del gate
+  // de login (después de los hooks, por las reglas de hooks).
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/credencial/')) {
+    return (
+      <Routes>
+        <Route path="/credencial/:token" element={<CredencialPublica />} />
+      </Routes>
+    )
+  }
 
   if (!user) {
     return (
@@ -101,6 +114,8 @@ export default function App() {
           <Route path="/beneficios" element={<Beneficios />} />
           <Route path="/comunicaciones" element={<Comunicaciones />} />
           <Route path="/directorio/archivos" element={<ArchivosDirectorio />} />
+          <Route path="/mi-credencial" element={<MiCredencial />} />
+          <Route path="/credenciales" element={<Credenciales />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>

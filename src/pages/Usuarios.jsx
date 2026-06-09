@@ -37,6 +37,7 @@ const SECCIONES = [
   { id: 'beneficios', label: 'Beneficios', icon: 'ti-gift' },
   { id: 'comunicaciones', label: 'Comunicaciones', icon: 'ti-speakerphone' },
   { id: 'archivos_directorio', label: 'Archivos Directorio', icon: 'ti-folder' },
+  { id: 'credencial', label: 'Credencial', icon: 'ti-id' },
 ]
 
 const DESCRIPCION_ROLES = [

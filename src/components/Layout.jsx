@@ -27,6 +27,8 @@ const PATH_SECCION = {
   '/beneficios': 'beneficios',
   '/comunicaciones': 'comunicaciones',
   '/directorio/archivos': 'archivos_directorio',
+  '/mi-credencial': 'credencial',
+  '/credenciales': 'credencial',
 }
 
 const ROL_META = {
@@ -70,6 +72,9 @@ const NAV = [
   { path: '/comunicaciones', icon: 'ti-speakerphone', label: 'Comunicaciones' },
   { section: 'Directorio' },
   { path: '/directorio/archivos', icon: 'ti-folder', label: 'Archivos' },
+  { section: 'Credenciales' },
+  { path: '/mi-credencial', icon: 'ti-id', label: 'Mi credencial', requiereSocio: true },
+  { path: '/credenciales', icon: 'ti-id-badge', label: 'Credenciales de socios', ocultarSocio: true },
   { section: 'Configuración' },
   { path: '/bancos', icon: 'ti-building-bank', label: 'Bancos y config.' },
   { path: '/reporteria', icon: 'ti-chart-bar', label: 'Reportería' },
@@ -101,6 +106,8 @@ const PAGE_TITLES = {
   '/beneficios': 'Beneficios y Convenios',
   '/comunicaciones': 'Comunicaciones',
   '/directorio/archivos': 'Archivos Directorio',
+  '/mi-credencial': 'Mi Credencial',
+  '/credenciales': 'Credenciales de socios',
 }
 
 export default function Layout({ children }) {
@@ -175,8 +182,12 @@ export default function Layout({ children }) {
   const navConPermisos = NAV.filter(item => {
     if (item.section) return true
     const seccion = PATH_SECCION[item.path]
-    if (!seccion) return true
-    return tieneAcceso(seccion)
+    if (seccion && !tieneAcceso(seccion)) return false
+    // "Mi credencial" solo si el usuario está vinculado a un socio.
+    if (item.requiereSocio && !user?.socio_id) return false
+    // "Credenciales de socios" no se muestra al rol socio.
+    if (item.ocultarSocio && user?.rol === 'socio') return false
+    return true
   })
   const navFiltrado = navConPermisos.filter((item, i, arr) => {
     if (!item.section) return true
