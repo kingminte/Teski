@@ -26,6 +26,7 @@ import SolicitarClase from './pages/SolicitarClase'
 import GestionarClases from './pages/GestionarClases'
 import ReporteClases from './pages/ReporteClases'
 import Beneficios from './pages/Beneficios'
+import Comunicaciones from './pages/Comunicaciones'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -97,6 +98,7 @@ export default function App() {
           <Route path="/clases/config" element={<ClasesConfig />} />
           <Route path="/clases/reporte" element={<ReporteClases />} />
           <Route path="/beneficios" element={<Beneficios />} />
+          <Route path="/comunicaciones" element={<Comunicaciones />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>

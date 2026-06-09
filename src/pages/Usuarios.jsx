@@ -35,6 +35,7 @@ const SECCIONES = [
   { id: 'clases_config', label: 'Clases · Configuración', icon: 'ti-adjustments' },
   { id: 'clases_reporte', label: 'Clases · Reporte', icon: 'ti-report-money' },
   { id: 'beneficios', label: 'Beneficios', icon: 'ti-gift' },
+  { id: 'comunicaciones', label: 'Comunicaciones', icon: 'ti-speakerphone' },
 ]
 
 const DESCRIPCION_ROLES = [

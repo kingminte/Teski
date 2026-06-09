@@ -25,6 +25,7 @@ const PATH_SECCION = {
   '/clases/config': 'clases_config',
   '/clases/reporte': 'clases_reporte',
   '/beneficios': 'beneficios',
+  '/comunicaciones': 'comunicaciones',
 }
 
 const ROL_META = {
@@ -65,6 +66,7 @@ const NAV = [
   { path: '/clases/reporte', icon: 'ti-report-money', label: 'Reporte mensual' },
   { section: 'Comunicación' },
   { path: '/beneficios', icon: 'ti-gift', label: 'Beneficios' },
+  { path: '/comunicaciones', icon: 'ti-speakerphone', label: 'Comunicaciones' },
   { section: 'Configuración' },
   { path: '/bancos', icon: 'ti-building-bank', label: 'Bancos y config.' },
   { path: '/reporteria', icon: 'ti-chart-bar', label: 'Reportería' },
@@ -94,6 +96,7 @@ const PAGE_TITLES = {
   '/clases/config': 'Clases de esquí — Configuración',
   '/clases/reporte': 'Clases de esquí — Reporte mensual',
   '/beneficios': 'Beneficios y Convenios',
+  '/comunicaciones': 'Comunicaciones',
 }
 
 export default function Layout({ children }) {
