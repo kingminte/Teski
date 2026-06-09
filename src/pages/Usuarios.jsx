@@ -36,6 +36,7 @@ const SECCIONES = [
   { id: 'clases_reporte', label: 'Clases · Reporte', icon: 'ti-report-money' },
   { id: 'beneficios', label: 'Beneficios', icon: 'ti-gift' },
   { id: 'comunicaciones', label: 'Comunicaciones', icon: 'ti-speakerphone' },
+  { id: 'archivos_directorio', label: 'Archivos Directorio', icon: 'ti-folder' },
 ]
 
 const DESCRIPCION_ROLES = [

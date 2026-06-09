@@ -27,6 +27,7 @@ import GestionarClases from './pages/GestionarClases'
 import ReporteClases from './pages/ReporteClases'
 import Beneficios from './pages/Beneficios'
 import Comunicaciones from './pages/Comunicaciones'
+import ArchivosDirectorio from './pages/ArchivosDirectorio'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -99,6 +100,7 @@ export default function App() {
           <Route path="/clases/reporte" element={<ReporteClases />} />
           <Route path="/beneficios" element={<Beneficios />} />
           <Route path="/comunicaciones" element={<Comunicaciones />} />
+          <Route path="/directorio/archivos" element={<ArchivosDirectorio />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>
