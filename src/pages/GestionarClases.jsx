@@ -154,6 +154,27 @@ export default function GestionarClases() {
     setAgruparGrupoId(gruposMismoTipo[0]?.id || '')
     setNuevoGrupo(EMPTY_GRUPO)
   }
+  // Detecta si el profesor ya tiene otra clase que solapa en horario el mismo día.
+  // Tiempos normalizados a minutos para comparar HH:MM (form) con HH:MM:SS (base).
+  // Solape estricto [ini, fin): contiguas (10-11 y 11-12) NO solapan.
+  const detectarConflictoProfesor = ({ profesorId, horaIni, horaFin, fecha, excludeId = null }) => {
+    if (!profesorId) return null
+    const toMin = (t) => { const [h, m] = (t || '').split(':'); return (+h) * 60 + (+m || 0) }
+    const iniN = toMin(horaIni), finN = toMin(horaFin)
+    return grupos.find(g =>
+      g.id !== excludeId &&
+      g.profesor_id === profesorId &&
+      g.fecha === fecha &&
+      ['agendada', 'realizada', 'no_realizada'].includes(g.estado) &&
+      toMin(g.hora_inicio) < finN && iniN < toMin(g.hora_fin)
+    ) || null
+  }
+  const msgConflicto = (g) => {
+    const tipoLabel = g.tipo === 'snowboard' ? 'snowboard' : 'esquí'
+    const nombre = g.clases_profesores?.nombre || 'asignado'
+    return `El profesor ${nombre} ya tiene una clase de ${tipoLabel} de ${hhmm(g.hora_inicio)}–${hhmm(g.hora_fin)} en esta fecha. Cambia el horario o el profesor.`
+  }
+
   const handleConfirmarAgrupar = async () => {
     const sol = agruparSol
     setGuardandoAgrupar(true)
@@ -161,6 +182,8 @@ export default function GestionarClases() {
       let grupoId = agruparGrupoId
       if (agruparModo === 'nuevo') {
         if (!nuevoGrupo.hora_inicio || !nuevoGrupo.hora_fin) { showToast('Indica hora de inicio y fin', 'error'); setGuardandoAgrupar(false); return }
+        const conflicto = detectarConflictoProfesor({ profesorId: nuevoGrupo.profesor_id || null, horaIni: nuevoGrupo.hora_inicio, horaFin: nuevoGrupo.hora_fin, fecha: sol.fecha })
+        if (conflicto) { showToast(msgConflicto(conflicto), 'error'); setGuardandoAgrupar(false); return }
         const { data, error } = await supabase.from('clases_grupos').insert({
           fecha: sol.fecha, hora_inicio: nuevoGrupo.hora_inicio, hora_fin: nuevoGrupo.hora_fin,
           tipo: sol.tipo, profesor_id: nuevoGrupo.profesor_id || null, comentario: nuevoGrupo.comentario || null, estado: 'agendada',
@@ -186,6 +209,8 @@ export default function GestionarClases() {
     setFormEdit({ hora_inicio: hhmm(g.hora_inicio), hora_fin: hhmm(g.hora_fin), profesor_id: g.profesor_id || '', comentario: g.comentario || '' })
   }
   const handleGuardarEdit = async () => {
+    const conflicto = detectarConflictoProfesor({ profesorId: formEdit.profesor_id || null, horaIni: formEdit.hora_inicio, horaFin: formEdit.hora_fin, fecha: editGrupo.fecha, excludeId: editGrupo.id })
+    if (conflicto) { showToast(msgConflicto(conflicto), 'error'); return }
     setGuardandoEdit(true)
     const { error } = await supabase.from('clases_grupos').update({
       hora_inicio: formEdit.hora_inicio, hora_fin: formEdit.hora_fin,
