@@ -58,7 +58,7 @@ declare
 begin
   select id into v_corte_abierto_id from clases_cortes_pago where estado = 'abierto' limit 1;
   if found then
-    raise exception 'Ya hay un corte abierto. Cerralo antes de abrir uno nuevo.';
+    raise exception 'Ya hay un corte abierto. Ciérralo antes de abrir uno nuevo.';
   end if;
 
   insert into clases_cortes_pago (fecha_inicio, estado, created_by)
@@ -236,7 +236,7 @@ begin
   -- Debe haber un corte abierto: la clase se asigna a él (fecha contable).
   select id into v_corte_abierto from clases_cortes_pago where estado = 'abierto' limit 1;
   if v_corte_abierto is null then
-    raise exception 'No hay un corte de pago abierto. Pedile al administrador que abra uno en /clases/reporte antes de marcar clases como realizadas.';
+    raise exception 'No hay un corte de pago abierto. Pídele al administrador que abra uno en /clases/reporte antes de marcar clases como realizadas.';
   end if;
 
   for v_asist in select * from jsonb_array_elements(p_asistencias) loop

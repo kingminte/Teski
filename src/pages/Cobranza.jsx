@@ -502,7 +502,7 @@ export default function Cobranza() {
           </div>
           <div style={{ background: 'var(--navy-mid)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '1rem', overflow: 'auto' }}>
             <div style={{ fontSize: 11, color: 'var(--text-dim)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8, fontFamily: 'sans-serif' }}>
-              Vista previa {previewSocio ? `(${previewSocio.nombre} ${previewSocio.apellido})` : '(elegí un socio para ver con datos)'}
+              Vista previa {previewSocio ? `(${previewSocio.nombre} ${previewSocio.apellido})` : '(elige un socio para ver con datos)'}
             </div>
             <div style={{ fontSize: 13, color: 'var(--gold-light)', marginBottom: 8, fontFamily: 'sans-serif' }}>
               <strong>Asunto:</strong> {asuntoRendered}

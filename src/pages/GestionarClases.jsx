@@ -160,7 +160,7 @@ export default function GestionarClases() {
     try {
       let grupoId = agruparGrupoId
       if (agruparModo === 'nuevo') {
-        if (!nuevoGrupo.hora_inicio || !nuevoGrupo.hora_fin) { showToast('Indicá hora de inicio y fin', 'error'); setGuardandoAgrupar(false); return }
+        if (!nuevoGrupo.hora_inicio || !nuevoGrupo.hora_fin) { showToast('Indica hora de inicio y fin', 'error'); setGuardandoAgrupar(false); return }
         const { data, error } = await supabase.from('clases_grupos').insert({
           fecha: sol.fecha, hora_inicio: nuevoGrupo.hora_inicio, hora_fin: nuevoGrupo.hora_fin,
           tipo: sol.tipo, profesor_id: nuevoGrupo.profesor_id || null, comentario: nuevoGrupo.comentario || null, estado: 'agendada',
@@ -168,7 +168,7 @@ export default function GestionarClases() {
         if (error) throw new Error(error.message)
         grupoId = data.id
       }
-      if (!grupoId) { showToast('Elegí o creá un grupo', 'error'); setGuardandoAgrupar(false); return }
+      if (!grupoId) { showToast('Elige o crea un grupo', 'error'); setGuardandoAgrupar(false); return }
       const { error: e2 } = await supabase.from('clases_solicitudes').update({ grupo_id: grupoId, estado: 'agendada' }).eq('id', sol.id)
       if (e2) throw new Error(e2.message)
       showToast('Solicitud agendada')
@@ -247,7 +247,7 @@ export default function GestionarClases() {
   if (disponibilidad.length === 0 && !loading) {
     return (
       <div className="card">
-        <div className="empty-state"><i className="ti ti-calendar-off"></i>No hay fechas de disponibilidad publicadas. Publicá fechas en Gestión Escuela → Disponibilidad.</div>
+        <div className="empty-state"><i className="ti ti-calendar-off"></i>No hay fechas de disponibilidad publicadas. Publica fechas en Gestión Escuela → Disponibilidad.</div>
       </div>
     )
   }

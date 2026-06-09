@@ -113,7 +113,7 @@ export default function Beneficios() {
     if (!form.titulo.trim() || !form.proveedor.trim() || !form.categoria_id || !form.descuento_texto.trim()) {
       showToast('Título, proveedor, categoría y descuento son obligatorios', 'error'); return
     }
-    if (!form.vigencia_desde || !form.vigencia_hasta) { showToast('Indicá el rango de vigencia', 'error'); return }
+    if (!form.vigencia_desde || !form.vigencia_hasta) { showToast('Indica el rango de vigencia', 'error'); return }
     if (form.vigencia_hasta < form.vigencia_desde) { showToast('La vigencia "hasta" no puede ser anterior a "desde"', 'error'); return }
     setSaving(true)
     const payload = { ...form, categoria_id: form.categoria_id || null }
@@ -183,7 +183,7 @@ export default function Beneficios() {
         {loading ? (
           <div className="card"><div className="empty-state"><i className="ti ti-loader"></i>Cargando…</div></div>
         ) : visibles.length === 0 ? (
-          <div className="card"><div className="empty-state"><i className="ti ti-gift-off"></i>Por el momento no hay beneficios vigentes. Volvé pronto.</div></div>
+          <div className="card"><div className="empty-state"><i className="ti ti-gift-off"></i>Por el momento no hay beneficios vigentes. Vuelve pronto.</div></div>
         ) : (
           <>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: '1rem' }}>

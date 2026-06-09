@@ -211,7 +211,7 @@ export default function Cuotas() {
     hoy.setHours(0, 0, 0, 0)
     if (fechaPago > hoy) {
       const [y, m, d] = formPago.fecha_pago.split('-')
-      if (!confirm(`La fecha del pago es ${d}/${m}/${y} (posterior a hoy). ¿Confirmás que es correcta?`)) return
+      if (!confirm(`La fecha del pago es ${d}/${m}/${y} (posterior a hoy). ¿Confirmas que es correcta?`)) return
     }
 
     setSaving(true)

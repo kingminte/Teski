@@ -161,8 +161,8 @@ export default function SolicitarClase() {
   const seleccionados = participantesBase.filter(p => selecciones[p.key]?.checked)
 
   const handleSubmit = async () => {
-    if (!fechaSel) { showToast('Elegí un día', 'error'); return }
-    if (seleccionados.length === 0) { showToast('Seleccioná al menos un participante', 'error'); return }
+    if (!fechaSel) { showToast('Elige un día', 'error'); return }
+    if (seleccionados.length === 0) { showToast('Selecciona al menos un participante', 'error'); return }
 
     // Pre-check de duplicados (para mensaje con nombre); el RPC es la red atómica.
     const dup = seleccionados.find(p => solicitudes.some(s =>
@@ -226,7 +226,7 @@ export default function SolicitarClase() {
       <div className="card">
         <div className="empty-state">
           <i className="ti ti-ski-jumping" style={{ color: 'var(--gold-dim)' }}></i>
-          Tu usuario no está vinculado a un socio del club. Si necesitás gestionar solicitudes, andá a <strong style={{ marginLeft: 4 }}>Gestionar clases</strong>.
+          Tu usuario no está vinculado a un socio del club. Si necesitas gestionar solicitudes, ve a <strong style={{ marginLeft: 4 }}>Gestionar clases</strong>.
         </div>
       </div>
     )
@@ -257,7 +257,7 @@ export default function SolicitarClase() {
         {loading ? (
           <div className="empty-state"><i className="ti ti-loader"></i>Cargando…</div>
         ) : solsVisibles.length === 0 ? (
-          <div className="empty-state"><i className="ti ti-calendar-off"></i>{verHistorico ? 'No tenés solicitudes.' : 'No tenés solicitudes próximas.'}</div>
+          <div className="empty-state"><i className="ti ti-calendar-off"></i>{verHistorico ? 'No tienes solicitudes.' : 'No tienes solicitudes próximas.'}</div>
         ) : (
           <div style={{ padding: '0.5rem 0' }}>
             {solsVisibles.map(s => {
