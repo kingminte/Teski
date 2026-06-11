@@ -74,7 +74,7 @@ export default function SolicitarClase() {
   const loadAll = async () => {
     setLoading(true)
     const [{ data: soc }, { data: benes }, { data: nivs }, { data: disp }, { data: cfg }] = await Promise.all([
-      supabase.from('socios').select('id,nombre,apellido,nivel_esqui_id,nivel_snowboard_id').eq('id', miSocioId).maybeSingle(),
+      supabase.from('socios').select('id,nombre,apellido,estado,nivel_esqui_id,nivel_snowboard_id').eq('id', miSocioId).maybeSingle(),
       supabase.from('beneficiarios').select('*').eq('socio_id', miSocioId),
       supabase.from('clases_niveles').select('*').eq('activo', true).order('orden'),
       supabase.from('clases_disponibilidad').select('*').gte('fecha', hoyISO()).order('fecha'),
@@ -161,6 +161,8 @@ export default function SolicitarClase() {
   const seleccionados = participantesBase.filter(p => selecciones[p.key]?.checked)
 
   const handleSubmit = async () => {
+    // Chequeo defensivo: solo socios activos (protege contra manipulación de DOM).
+    if (socio?.estado !== 'activo') { showToast('Tu cuenta está pendiente. Contacta al tesorero para regularizar y poder tomar clases.', 'error'); return }
     if (!fechaSel) { showToast('Elige un día', 'error'); return }
     if (seleccionados.length === 0) { showToast('Selecciona al menos un participante', 'error'); return }
 
@@ -233,6 +235,8 @@ export default function SolicitarClase() {
   }
 
   const solsVisibles = verHistorico ? solicitudes : solicitudes.filter(s => s.fecha >= hoyISO())
+  // Solo socios activos pueden crear solicitudes (el estado del titular manda).
+  const puedeSolicitar = socio?.estado === 'activo'
 
   return (
     <div>
@@ -241,10 +245,16 @@ export default function SolicitarClase() {
       <div className="card">
         <div className="card-header">
           <div className="card-title"><i className="ti ti-ski-jumping"></i> Clases de esquí</div>
-          <button className="btn btn-primary btn-sm" onClick={openModal} disabled={loading}>
+          <button className="btn btn-primary btn-sm" onClick={openModal} disabled={loading || !puedeSolicitar}>
             <i className="ti ti-plus"></i> Nueva solicitud
           </button>
         </div>
+        {!loading && !puedeSolicitar && (
+          <div style={{ margin: '0 1.5rem 1rem', padding: '0.7rem 0.9rem', borderRadius: 8, fontSize: 13, fontFamily: 'sans-serif', background: 'rgba(239,159,39,0.1)', border: '0.5px solid rgba(239,159,39,0.3)', color: '#fac775', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <i className="ti ti-alert-triangle" style={{ fontSize: 16, flexShrink: 0 }}></i>
+            Tu cuenta está pendiente. Contacta al tesorero para regularizar y poder tomar clases.
+          </div>
+        )}
       </div>
 
       <div className="card">
