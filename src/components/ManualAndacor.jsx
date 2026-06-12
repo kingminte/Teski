@@ -72,7 +72,6 @@ export default function ManualAndacor() {
           <li><strong>Profesores</strong>: agregar, editar, activar/desactivar y eliminar. Los inactivos no aparecen al asignar profesor a un grupo.</li>
           <li><strong>Niveles</strong>: agregar/editar, ordenar (campo orden) y activar/desactivar. Se usan para esquí y snowboard.</li>
         </ul>
-        <Atencion>La <strong>tarifa por hora-profesor</strong> y las reglas de pago las define el administrador del club; no se gestionan ni se ven desde tu rol.</Atencion>
       </Seccion>
 
       <Seccion id="agrupar" icon="ti-clipboard-list" titulo="4. Agrupar solicitudes en clases">
