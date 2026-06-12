@@ -29,8 +29,9 @@ const TipoBadge = ({ tipo }) => (
 export default function ReporteClases() {
   const { showToast, ToastComponent } = useToast()
   const { puedeEditar, user } = useAuth()
-  const editable = puedeEditar('clases_reporte')
+  const editable = puedeEditar('clases_reporte')   // admin/gestor (completo)
   const esAdmin = user?.rol === 'admin'
+  const esAndacor = user?.rol === 'andacor'         // lectura operativa, sin montos
 
   const [cortes, setCortes] = useState([])
   const [corteSelId, setCorteSelId] = useState('')
@@ -71,7 +72,8 @@ export default function ReporteClases() {
     if (cfg) setConfig(cfg)
     setHuerfanas(huer || [])
     const abierto = lista.find(c => c.estado === 'abierto')
-    const inicial = (abierto || lista[0] || {}).id || ''
+    // Andacor solo ve el corte abierto (sin navegar históricos).
+    const inicial = esAndacor ? (abierto?.id || '') : ((abierto || lista[0] || {}).id || '')
     setCorteSelId(inicial)
     if (!inicial) setLoading(false)
   }
@@ -217,9 +219,9 @@ export default function ReporteClases() {
       {/* Header */}
       <div className="card">
         <div className="card-header">
-          <div className="card-title"><i className="ti ti-report-money"></i> Reporte de clases de esquí</div>
+          <div className="card-title"><i className="ti ti-report-money"></i> {esAndacor ? 'Reporte del corte actual' : 'Reporte de clases de esquí'}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {cortes.length > 0 && (
+            {!esAndacor && cortes.length > 0 && (
               <select value={corteSelId} onChange={e => setCorteSelId(e.target.value)} style={{ width: 'auto', fontSize: 13 }}>
                 {cortes.map(c => (
                   <option key={c.id} value={c.id}>
@@ -228,12 +230,17 @@ export default function ReporteClases() {
                 ))}
               </select>
             )}
+            {esAndacor && corte && (
+              <span style={{ fontSize: 13, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                Corte #{corte.numero} — abierto desde {fmtFecha(corte.fecha_inicio)}
+              </span>
+            )}
             {editable && !cortes.some(c => c.estado === 'abierto') && cortes.length > 0 && (
               <button className="btn btn-primary btn-sm" onClick={() => { setFechaInicio(hoyISO()); setShowAbrir(true) }}>
                 <i className="ti ti-plus"></i> Abrir nuevo corte
               </button>
             )}
-            {corte && realizadas.length > 0 && (
+            {editable && corte && realizadas.length > 0 && (
               <button className="btn btn-sm" onClick={handleExportar} disabled={exportando}>
                 {exportando ? <><i className="ti ti-loader"></i></> : <><i className="ti ti-file-spreadsheet"></i> Excel</>}
               </button>
@@ -243,7 +250,9 @@ export default function ReporteClases() {
       </div>
 
       {/* Sin cortes */}
-      {cortes.length === 0 ? (
+      {esAndacor && !corte ? (
+        <div className="card"><div className="empty-state"><i className="ti ti-cash-off" style={{ color: 'var(--gold-dim)' }}></i>No hay corte abierto actualmente.</div></div>
+      ) : cortes.length === 0 ? (
         <div className="card">
           <div className="empty-state" style={{ flexDirection: 'column', gap: 12 }}>
             <i className="ti ti-cash-off" style={{ color: 'var(--gold-dim)' }}></i>
@@ -290,13 +299,14 @@ export default function ReporteClases() {
           </div>
 
           {/* Stats */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: '1rem' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${esAndacor ? 3 : 4},1fr)`, gap: 12, marginBottom: '1rem' }}>
             {[
               { label: 'Horas-profesor', value: fmtHoras(horas), color: 'var(--gold-light)' },
               { label: 'Clases realizadas', value: realizadas.length, color: '#85b7eb' },
               { label: 'Asistencias', value: asistencias, color: '#afa9ec' },
-              { label: 'A pagar a Andacor', value: formatearMontoConSimbolo(aPagar), color: '#5dcaa5', sub: `${fmtHoras(horas)} × ${formatearMontoConSimbolo(tarifa)}${ajuste ? ` ${ajuste > 0 ? '+' : '−'} ${formatearMontoConSimbolo(Math.abs(ajuste))}` : ''}` },
-            ].map(s => (
+              // Card económico: oculto para Andacor.
+              !esAndacor && { label: 'A pagar a Andacor', value: formatearMontoConSimbolo(aPagar), color: '#5dcaa5', sub: `${fmtHoras(horas)} × ${formatearMontoConSimbolo(tarifa)}${ajuste ? ` ${ajuste > 0 ? '+' : '−'} ${formatearMontoConSimbolo(Math.abs(ajuste))}` : ''}` },
+            ].filter(Boolean).map(s => (
               <div key={s.label} style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '1rem' }}>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>{s.label}</div>
                 <div style={{ fontSize: 20, fontWeight: 'bold', color: s.color }}>{s.value}</div>
@@ -331,7 +341,7 @@ export default function ReporteClases() {
                 {porProf.length === 0 ? <div style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>Sin clases realizadas.</div> : porProf.map((p, i) => (
                   <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '0.5px solid rgba(201,168,76,0.08)' }}>
                     <span style={{ fontSize: 13, color: '#c8d0dc' }}>{p.nombre}</span>
-                    <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>{fmtHoras(p.horas)} h · {formatearMontoConSimbolo(p.monto)}</span>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>{fmtHoras(p.horas)} h{esAndacor ? '' : ` · ${formatearMontoConSimbolo(p.monto)}`}</span>
                   </div>
                 ))}
               </div>
@@ -345,7 +355,7 @@ export default function ReporteClases() {
               <div className="empty-state"><i className="ti ti-calendar-off"></i>No hay clases realizadas en este corte.</div>
             ) : (
               <table>
-                <thead><tr><th>Fecha</th><th>Horario</th><th>Tipo</th><th>Profesor</th><th>Asist./Total</th><th>h-prof</th><th>Monto</th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Horario</th><th>Tipo</th><th>Profesor</th><th>Asist./Total</th><th>h-prof</th>{!esAndacor && <th>Monto</th>}</tr></thead>
                 <tbody>
                   {realizadas.map(g => {
                     const a = asisPorGrupo[g.id] || { total: 0, asistieron: 0 }
@@ -357,7 +367,7 @@ export default function ReporteClases() {
                         <td style={{ color: '#c8d0dc' }}>{g.clases_profesores?.nombre || '—'}</td>
                         <td style={{ color: 'var(--text-muted)' }}>{a.asistieron}/{a.total}</td>
                         <td style={{ color: 'var(--text-muted)' }}>{fmtHoras(duracionHorasDe(g))}</td>
-                        <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>{formatearMontoConSimbolo(montoClase(g))}</td>
+                        {!esAndacor && <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>{formatearMontoConSimbolo(montoClase(g))}</td>}
                       </tr>
                     )
                   })}
