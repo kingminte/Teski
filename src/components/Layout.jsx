@@ -29,6 +29,7 @@ const PATH_SECCION = {
   '/directorio/archivos': 'archivos_directorio',
   '/mi-credencial': 'credencial',
   '/credenciales': 'credencial',
+  '/manual': 'manual',
 }
 
 const ROL_META = {
@@ -80,6 +81,8 @@ const NAV = [
   { path: '/reporteria', icon: 'ti-chart-bar', label: 'Reportería' },
   { path: '/reporte-financiero', icon: 'ti-report-money', label: 'Reporte financiero' },
   { path: '/usuarios', icon: 'ti-shield-lock', label: 'Usuarios' },
+  { section: 'Ayuda' },
+  { path: '/manual', icon: 'ti-book-2', label: 'Manual' },
 ]
 
 const PAGE_TITLES = {
@@ -108,6 +111,7 @@ const PAGE_TITLES = {
   '/directorio/archivos': 'Archivos Directorio',
   '/mi-credencial': 'Mi Credencial',
   '/credenciales': 'Credenciales de socios',
+  '/manual': 'Manual',
 }
 
 export default function Layout({ children }) {
@@ -213,7 +217,7 @@ export default function Layout({ children }) {
       )}
 
       {/* Sidebar */}
-      <aside style={{
+      <aside className="no-print" style={{
         width: anchoSidebar,
         background:'#0d1e38',
         borderRight:'0.5px solid var(--border)',
@@ -305,8 +309,8 @@ export default function Layout({ children }) {
         </div>
       </aside>
 
-      <div style={{ marginLeft: marginMain, flex:1, display:'flex', flexDirection:'column', transition: 'margin-left 0.3s ease', minWidth: 0 }}>
-        <div style={{ background:'#0d1e38', borderBottom:'0.5px solid var(--border)', padding:'0 1rem 0 0.5rem', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:5, gap: 12 }}>
+      <div className="app-main" style={{ marginLeft: marginMain, flex:1, display:'flex', flexDirection:'column', transition: 'margin-left 0.3s ease', minWidth: 0 }}>
+        <div className="no-print" style={{ background:'#0d1e38', borderBottom:'0.5px solid var(--border)', padding:'0 1rem 0 0.5rem', height:56, display:'flex', alignItems:'center', justifyContent:'space-between', position:'sticky', top:0, zIndex:5, gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
             <button onClick={toggleMenu} style={{
               background: 'none', border: 'none', color: 'var(--gold)', cursor: 'pointer', fontSize: 22, padding: '4px 8px',

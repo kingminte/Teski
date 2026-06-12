@@ -31,6 +31,7 @@ import ArchivosDirectorio from './pages/ArchivosDirectorio'
 import MiCredencial from './pages/MiCredencial'
 import Credenciales from './pages/Credenciales'
 import CredencialPublica from './pages/CredencialPublica'
+import Manual from './pages/Manual'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -116,6 +117,7 @@ export default function App() {
           <Route path="/directorio/archivos" element={<ArchivosDirectorio />} />
           <Route path="/mi-credencial" element={<MiCredencial />} />
           <Route path="/credenciales" element={<Credenciales />} />
+          <Route path="/manual" element={<Manual />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>

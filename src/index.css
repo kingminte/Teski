@@ -206,3 +206,22 @@ select option { background: var(--navy-mid); }
     gap: 8px;
   }
 }
+
+/* Impresión / Guardar como PDF — usado sobre todo por el Manual.
+   Oculta menú lateral y header, fondo blanco, texto oscuro legible. */
+@media print {
+  .no-print { display: none !important; }
+  .app-main { margin-left: 0 !important; }
+  body { background: #fff !important; }
+  @page { margin: 1.5cm; }
+
+  /* Manual: invertir el tema oscuro a texto oscuro sobre blanco. */
+  .manual, .manual * { color: #1a1a1a !important; }
+  .manual a { color: #1a4d8c !important; }
+  .manual h2, .manual h3 { color: #0d1e38 !important; }
+  .manual .manual-seccion { break-inside: avoid; }
+  .manual .manual-seccion h3 { background: #f0f0f0 !important; border-left-color: #999 !important; }
+  .manual .manual-toc { background: #f7f7f7 !important; border: 1px solid #ddd !important; }
+  .manual .manual-tip { background: #eef4fb !important; border-left-color: #3b82c4 !important; }
+  .manual .manual-atencion { background: #fbf3e3 !important; border-left-color: #BA7517 !important; }
+}
