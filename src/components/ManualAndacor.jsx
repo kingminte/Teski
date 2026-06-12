@@ -109,7 +109,6 @@ export default function ManualAndacor() {
           <li>Detalle <strong>por profesor</strong>: nombre y horas dictadas.</li>
           <li>Tabla con <strong>todas las clases</strong> del corte: fecha, horario, tipo, profesor y asistencias/total.</li>
         </ul>
-        <Atencion>No ves los <strong>montos</strong> (lo que se paga): esa parte es de la tesorería. Tampoco puedes <strong>cerrar el corte</strong> ni navegar cortes anteriores; solo ves el corte abierto actual. Si no hay ninguno abierto, verás “No hay corte abierto actualmente”.</Atencion>
         <Tip>El reporte muestra las clases de <strong>todos</strong> los profesores del corte, no solo las tuyas.</Tip>
       </Seccion>
 
