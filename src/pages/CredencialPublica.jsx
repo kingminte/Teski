@@ -22,11 +22,14 @@ export default function CredencialPublica() {
     let cancel = false
     ;(async () => {
       setLoading(true)
-      // Solo columnas NO sensibles + beneficiarios embebidos (sin exponer
-      // id, RUT, email, teléfono, dirección ni fecha de nacimiento).
+      // Validar el token efímero: la RPC devuelve socio_id si está vigente, null si venció.
+      const { data: socioId } = await supabase.rpc('validar_token_credencial', { p_token: token })
+      if (cancel) return
+      if (!socioId) { setSocio(null); setLoading(false); return }
+      // Token vigente → traer datos del socio (solo columnas NO sensibles).
       const { data } = await supabase.from('socios')
         .select('numero_socio,nombre,apellido,estado,beneficiarios(nombre,apellido,estado)')
-        .eq('credencial_token', token)
+        .eq('id', socioId)
         .maybeSingle()
       if (!cancel) { setSocio(data || null); setLoading(false) }
     })()
@@ -37,15 +40,15 @@ export default function CredencialPublica() {
     return <div style={FONDO}><div style={{ color: '#64748b', marginTop: 80 }}>Verificando credencial…</div></div>
   }
 
-  // No encontrada → ficha estilo 404.
+  // Token vencido o inexistente → ficha informativa (mismo estilo limpio).
   if (!socio) {
     return (
       <div style={FONDO}>
         <div style={{ background: '#fff', borderRadius: 16, boxShadow: '0 6px 24px rgba(0,0,0,0.08)', padding: '40px 28px', maxWidth: 380, width: '100%', textAlign: 'center', marginTop: 40 }}>
-          <i className="ti ti-id-off" style={{ fontSize: 48, color: '#C62F2F' }}></i>
-          <h1 style={{ fontSize: 20, color: '#1e293b', margin: '16px 0 8px' }}>Credencial no encontrada</h1>
+          <i className="ti ti-circle-x" style={{ fontSize: 48, color: '#C62F2F' }}></i>
+          <h1 style={{ fontSize: 20, color: '#1e293b', margin: '16px 0 8px' }}>Credencial vencida</h1>
           <p style={{ fontSize: 13.5, color: '#64748b', lineHeight: 1.5, margin: 0 }}>
-            El código escaneado no corresponde a ninguna credencial vigente del Teski Club.
+            Esta credencial está vencida. Pídale al socio que muestre la credencial actualizada.
           </p>
         </div>
       </div>

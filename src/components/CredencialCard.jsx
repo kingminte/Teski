@@ -108,15 +108,15 @@ const CredencialCard = forwardRef(function CredencialCard({ socio, beneficiarios
             )}
           </div>
 
-          <div style={{ flexShrink: 0, textAlign: 'center' }}>
-            <div style={{ background: '#fff', borderRadius: 8, padding: 5, width: 70, height: 70, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ flexShrink: 0, textAlign: 'center', width: 76 }}>
+            <div style={{ background: '#fff', borderRadius: 8, padding: 5, width: 70, height: 70, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {qr
                 ? <img src={qr} alt="QR credencial" style={{ width: '100%', height: '100%', display: 'block' }} />
-                : <i className="ti ti-qrcode" style={{ fontSize: 40, color: '#1e3a5f' }}></i>}
+                : <i className="ti ti-wifi-off" style={{ fontSize: 30, color: '#94a3b8' }}></i>}
             </div>
-            <div style={{ fontSize: 11, fontWeight: 700, marginTop: 5, letterSpacing: 0.5 }}>
-              N° {socio.numero_socio}
-            </div>
+            {url
+              ? <div style={{ fontSize: 11, fontWeight: 700, marginTop: 5, letterSpacing: 0.5 }}>N° {socio.numero_socio}</div>
+              : <div style={{ fontSize: 8, opacity: 0.9, marginTop: 5, lineHeight: 1.2 }}>Sin señal para emitir QR</div>}
           </div>
         </div>
       </div>

@@ -1,3 +1,5 @@
+import { supabase } from './supabase'
+
 // Helpers compartidos del módulo Credencial Virtual.
 // NOTA: el estado del socio NO se calcula acá — sale directo de
 // socios.estado (decisión administrativa). Acá solo hay utilidades de
@@ -19,13 +21,14 @@ export const beneficiariosActivos = (lista) =>
 export const nombreCompleto = (p) =>
   p ? `${p.nombre || ''} ${p.apellido || ''}`.trim() : ''
 
-// Token alfanumérico de 16 chars (para rotar el token desde el cliente).
-// El unique de la BD atrapa cualquier colisión; el caller reintenta.
-export const generarToken = () => {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
-  let t = ''
-  for (let i = 0; i < 16; i++) t += chars[Math.floor(Math.random() * chars.length)]
-  return t
+// Crea un token efímero (60s) para el socio vía RPC. Devuelve
+// { token, expires_at } o null si falla (ej. sin conexión).
+export const crearTokenEfimero = async (socioId) => {
+  if (!socioId) return null
+  const { data, error } = await supabase.rpc('crear_token_credencial', { p_socio_id: socioId })
+  if (error || !data) return null
+  const row = Array.isArray(data) ? data[0] : data
+  return row ? { token: row.token, expires_at: row.expires_at } : null
 }
 
 // Fecha + hora de consulta, legible (es-CL). Para el pie de verificación.

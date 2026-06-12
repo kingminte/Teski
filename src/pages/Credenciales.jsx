@@ -1,31 +1,28 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { toPng } from 'html-to-image'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { useAuth } from '../lib/useAuth'
 import { useToast } from '../lib/useToast.jsx'
 import CredencialCard from '../components/CredencialCard'
-import { urlPublica, generarToken } from '../lib/credencial'
+import { urlPublica } from '../lib/credencial'
+import { useCredencialToken } from '../lib/useCredencialToken'
 
 export default function Credenciales() {
-  const { puedeEditar } = useAuth()
-  const { showToast, ToastComponent } = useToast()
-  const puedeRotar = puedeEditar('credencial')   // admin/gestor
+  const { ToastComponent } = useToast()
 
   const [socios, setSocios] = useState([])
   const [busqueda, setBusqueda] = useState('')
   const [sel, setSel] = useState(null)            // socio seleccionado
   const [beneficiarios, setBeneficiarios] = useState([])
   const [loading, setLoading] = useState(true)
-  const [bajando, setBajando] = useState(false)
-  const [rotando, setRotando] = useState(false)
-  const cardRef = useRef(null)
+
+  // Token efímero del socio seleccionado (rota cada 60s mientras esté abierto).
+  const { token, segundos, total, sinConexion } = useCredencialToken(sel?.id, !!sel)
 
   useEffect(() => { load() }, [])
 
   const load = async () => {
     setLoading(true)
     const { data } = await supabase.from('socios')
-      .select('id,numero_socio,nombre,apellido,rut,estado,credencial_token')
+      .select('id,numero_socio,nombre,apellido,rut,estado')
       .order('apellido')
     setSocios(data || [])
     setLoading(false)
@@ -49,42 +46,8 @@ export default function Credenciales() {
     setBeneficiarios(data || [])
   }
 
-  const descargar = async () => {
-    if (!cardRef.current) return
-    setBajando(true)
-    try {
-      const dataUrl = await toPng(cardRef.current, { pixelRatio: 3, cacheBust: true })
-      const a = document.createElement('a')
-      a.download = `credencial-${sel.numero_socio}.png`
-      a.href = dataUrl
-      a.click()
-    } catch {
-      showToast('No se pudo generar la imagen', 'error')
-    } finally {
-      setBajando(false)
-    }
-  }
-
-  const rotarToken = async () => {
-    if (!sel) return
-    if (!window.confirm(`¿Generar un nuevo token para ${sel.nombre} ${sel.apellido}? El QR anterior dejará de funcionar.`)) return
-    setRotando(true)
-    let nuevo, error, intentos = 0
-    do {
-      nuevo = generarToken()
-      const res = await supabase.from('socios').update({ credencial_token: nuevo }).eq('id', sel.id)
-      error = res.error
-      intentos++
-    } while (error && intentos < 5)
-    setRotando(false)
-    if (error) { showToast('No se pudo generar el token', 'error'); return }
-    const actualizado = { ...sel, credencial_token: nuevo }
-    setSel(actualizado)
-    setSocios(prev => prev.map(s => s.id === sel.id ? actualizado : s))
-    showToast('Nuevo token generado — el QR cambió')
-  }
-
-  const url = sel ? urlPublica(sel.credencial_token) : ''
+  const url = urlPublica(token)
+  const pct = Math.round((segundos / total) * 100)
 
   return (
     <div>
@@ -92,7 +55,7 @@ export default function Credenciales() {
       <div style={{ marginBottom: 18 }}>
         <h2 style={{ margin: 0, color: 'var(--gold-light)', fontSize: 20 }}>Credenciales de socios</h2>
         <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
-          Busca un socio para ver y descargar su credencial.
+          Busca un socio para ver su credencial. El QR se renueva cada 60 segundos.
         </div>
       </div>
 
@@ -136,19 +99,23 @@ export default function Credenciales() {
             <div className="card"><div className="empty-state"><i className="ti ti-id-badge"></i>Selecciona un socio para ver su credencial.</div></div>
           ) : (
             <>
-              <CredencialCard ref={cardRef} socio={sel} beneficiarios={beneficiarios} url={url} />
-              <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
-                <button className="btn btn-primary" onClick={descargar} disabled={bajando}>
-                  <i className="ti ti-download"></i> {bajando ? 'Generando…' : 'Descargar imagen'}
-                </button>
-                {puedeRotar && (
-                  <button className="btn" onClick={rotarToken} disabled={rotando}>
-                    <i className="ti ti-refresh"></i> {rotando ? 'Generando…' : 'Generar nuevo token'}
-                  </button>
+              <CredencialCard socio={sel} beneficiarios={beneficiarios} url={url} />
+              <div style={{ marginTop: 14 }}>
+                {sinConexion ? (
+                  <div style={{ fontSize: 12, color: '#fac775', fontFamily: 'sans-serif', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <i className="ti ti-wifi-off"></i> Sin conexión — no se pudo emitir el QR.
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginBottom: 5 }}>
+                      <span>Código de verificación</span>
+                      <span>Se renueva en {segundos}s</span>
+                    </div>
+                    <div style={{ height: 6, background: 'rgba(201,168,76,0.15)', borderRadius: 3, overflow: 'hidden' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', background: 'var(--gold)', borderRadius: 3, transition: 'width 1s linear' }}></div>
+                    </div>
+                  </>
                 )}
-              </div>
-              <div style={{ marginTop: 16, fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-                URL pública: <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{url}</span>
               </div>
             </>
           )}
