@@ -113,8 +113,15 @@ export default function ManualAndacor() {
       </Seccion>
 
       <Seccion id="credencial" icon="ti-id-badge" titulo="8. Validar la credencial de un socio">
-        <p>En el menú, entra a <strong>Credenciales de socios</strong>. Busca al socio por nombre, RUT o número de socio y selecciónalo: ves su credencial con el QR vigente (se renueva cada 60 segundos).</p>
-        <p>Antes de la clase, puedes mirar su estado (activo/pendiente/inactivo) o escanear el QR para validarlo.</p>
+        <p>Cuando el socio llega a clase, te muestra el QR de su credencial en su celular.</p>
+        <Pasos>
+          <li>Escanea el QR con la cámara de tu teléfono (o una app de escaneo).</li>
+          <li>Se abre una página pública con el nombre del socio, sus beneficiarios, el estado y el año de vigencia.</li>
+          <li>Si dice <strong style={{ color: '#1D9E75' }}>“Socio activo”</strong> (verde), puedes dar la clase.</li>
+          <li>Si dice <strong style={{ color: '#BA7517' }}>“Socio pendiente”</strong> (ámbar) o <strong style={{ color: '#C62F2F' }}>“Socio inactivo”</strong> (rojo), no debería tomar clase: avísale al tesorero del club.</li>
+        </Pasos>
+        <p>El QR se renueva cada 60 segundos por seguridad. Si te muestran una captura de pantalla vieja, vas a ver <strong>“Credencial vencida”</strong>.</p>
+        <Tip>Si el socio no puede mostrar el QR por falta de conexión, contacta al tesorero antes de dar la clase.</Tip>
       </Seccion>
 
       <Seccion id="contacto" icon="ti-mail" titulo="Contacto">
