@@ -50,7 +50,12 @@ const CredencialCard = forwardRef(function CredencialCard({ socio, beneficiarios
     <div
       ref={ref}
       style={{
-        position: 'relative', width: '100%', maxWidth: 480, aspectRatio: '1.59',
+        position: 'relative', width: '100%', maxWidth: 480,
+        // min-height en vez de aspect-ratio fijo: la tarjeta crece con el
+        // contenido (lista de beneficiarios) sin recortar. ~480/1.59 mantiene
+        // la proporción de tarjeta cuando hay pocos.
+        minHeight: 302,
+        display: 'flex', flexDirection: 'column',
         borderRadius: 16, overflow: 'hidden', color: '#fff',
         fontFamily: 'sans-serif', boxShadow: '0 8px 28px rgba(0,0,0,0.35)',
         background: '#1e3a5f',
@@ -59,8 +64,9 @@ const CredencialCard = forwardRef(function CredencialCard({ socio, beneficiarios
       {/* Capa de fondo (gradient + filtro), separada para no desaturar el contenido */}
       <div style={{ position: 'absolute', inset: 0, background: meta.gradient, filter: meta.filter, zIndex: 0 }} />
 
-      {/* Contenido */}
-      <div style={{ position: 'relative', zIndex: 1, height: '100%', display: 'flex', flexDirection: 'column', padding: '5%' }}>
+      {/* Contenido: flex:1 para llenar la altura (mínimo o crecida) y que
+          marginTop:auto del cuerpo funcione tanto con pocos como con muchos benes. */}
+      <div style={{ position: 'relative', zIndex: 1, flex: 1, display: 'flex', flexDirection: 'column', padding: '5%' }}>
         {/* Header */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
           <div style={{ background: '#fff', borderRadius: 8, padding: '6px 9px', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', maxWidth: '58%' }}>
