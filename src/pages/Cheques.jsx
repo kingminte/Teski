@@ -19,7 +19,7 @@ const EMPTY_FORM = {
 
 export default function Cheques() {
   const { showToast, ToastComponent } = useToast()
-  const { puedeEditar } = useAuth()
+  const { puedeEditar, user } = useAuth()
   const editable = puedeEditar('cheques')
   const [cheques, setCheques] = useState([])
   const [socios, setSocios] = useState([])
@@ -168,15 +168,47 @@ export default function Cheques() {
 
   const handleAmarrar = async (chequeId) => {
     if (!movId) { showToast('Selecciona un movimiento', 'error'); return }
-    // La fecha del banco manda: el cheque cayó en cartola en la fecha del movimiento.
-    const movFecha = movimientos.find(m => m.id === movId)?.fecha || null
-    const { error } = await supabase.from('cheques').update({ movimiento_id: movId, estado: 'depositado', fecha_deposito: movFecha }).eq('id', chequeId)
-    if (error) showToast('Error al amarrar', 'error')
-    else {
-      await supabase.from('movimientos').update({ estado: 'conciliado' }).eq('id', movId)
-      showToast('Cheque amarrado a cartola correctamente')
-      setAmarrarId(null); setMovId(''); load()
+    const cheque = cheques.find(c => c.id === chequeId)
+    if (!cheque) { showToast('Cheque no encontrado', 'error'); return }
+
+    // Idempotente: no re-amarrar ni clobberear un cheque ya ligado.
+    if (cheque.movimiento_id === movId) {
+      showToast('Este cheque ya está amarrado a ese movimiento')
+      setAmarrarId(null); setMovId('')
+      return
     }
+    if (cheque.movimiento_id) {
+      showToast('Este cheque ya está amarrado a otro movimiento', 'error')
+      return
+    }
+
+    const ahora = new Date().toISOString() // timestamp de auditoría (no es fecha de display)
+    const movFecha = movimientos.find(m => m.id === movId)?.fecha || null
+
+    // 1) Cheque → movimiento. Preservar la fecha_deposito FÍSICA: solo tomar la
+    //    del banco si el cheque aún no la tenía (caso 'por_depositar' que recién cae).
+    const chequeUpdate = {
+      movimiento_id: movId,
+      estado: 'depositado',
+      conciliado_en: ahora,
+      conciliado_por: user?.id || null,
+    }
+    if (!cheque.fecha_deposito) chequeUpdate.fecha_deposito = movFecha
+    const { error: eCheque } = await supabase.from('cheques').update(chequeUpdate).eq('id', chequeId)
+    if (eCheque) { showToast('Error al amarrar el cheque: ' + eCheque.message, 'error'); return }
+
+    // 2) Propagar SOLO al pago de ESTE cheque que aún no tiene movimiento.
+    //    No crea pagos (solo liga el existente) → no cambia el total de cuota. Idempotente.
+    const { error: ePago } = await supabase.from('pagos_cuota')
+      .update({ movimiento_id: movId, conciliado_en: ahora, conciliado_por: user?.id || null })
+      .eq('cheque_id', chequeId).is('movimiento_id', null)
+    if (ePago) { showToast('Cheque amarrado, pero falló ligar su pago: ' + ePago.message, 'error'); load(); return }
+
+    // 3) Marcar el movimiento como conciliado.
+    await supabase.from('movimientos').update({ estado: 'conciliado' }).eq('id', movId)
+
+    showToast('Cheque amarrado a cartola correctamente')
+    setAmarrarId(null); setMovId(''); load()
   }
 
   const handleCambiarEstado = async (id, estado) => {
@@ -378,11 +410,16 @@ export default function Cheques() {
                         <button className="btn btn-sm" title="Editar" onClick={() => openEdit(c)}>
                           <i className="ti ti-edit"></i>
                         </button>
+                        {/* Amarrar: en 'por_depositar' (como siempre) y también en
+                            'depositado' sin movimiento (red de seguridad para rescatar
+                            depositados huérfanos). Oculto si ya está amarrado o anulado. */}
+                        {(c.estado === 'por_depositar' || (c.estado === 'depositado' && !c.movimiento_id)) && (
+                          <button className="btn btn-sm" onClick={() => setAmarrarId(amarrarId === c.id ? null : c.id)}>
+                            <i className="ti ti-link"></i> Amarrar
+                          </button>
+                        )}
                         {c.estado === 'por_depositar' && (
                           <>
-                            <button className="btn btn-sm" onClick={() => setAmarrarId(amarrarId === c.id ? null : c.id)}>
-                              <i className="ti ti-link"></i> Amarrar
-                            </button>
                             <button className="btn btn-sm" onClick={() => handleCambiarEstado(c.id, 'depositado')}>
                               <i className="ti ti-check"></i>
                             </button>
