@@ -38,6 +38,10 @@ export default function Cheques() {
   const { bancos: BANCOS } = useBancos()
   const [amarrarId, setAmarrarId] = useState(null)
   const [movId, setMovId] = useState('')
+  // Mapa { movimiento_id: { fecha, cartolas } } para la columna "En cartola".
+  // Se carga en una query separada (igual que Control Chequera) para NO tocar
+  // el .select() de cheques: si este join fallara, la lista de cheques no se rompe.
+  const [movimientosCartola, setMovimientosCartola] = useState({})
 
   useEffect(() => {
     load()
@@ -52,8 +56,36 @@ export default function Cheques() {
       .select('*, socios(nombre,apellido,numero_socio)')
       .order('numero', { ascending: false })
     if (error) console.error('Error cargando cheques:', error)
-    setCheques(data || [])
+    const chequesData = data || []
+    setCheques(chequesData)
     setLoading(false)
+
+    // Join "En cartola" en query separada (espejo de Control Chequera). Aislado:
+    // un error aquí no afecta la lista de cheques ya seteada arriba.
+    const movIds = chequesData.map(c => c.movimiento_id).filter(Boolean)
+    if (movIds.length > 0) {
+      const { data: movs } = await supabase
+        .from('movimientos')
+        .select('id, fecha, cartolas(nombre_archivo)')
+        .in('id', movIds)
+      const map = {}
+      for (const m of movs || []) map[m.id] = m
+      setMovimientosCartola(map)
+    } else {
+      setMovimientosCartola({})
+    }
+  }
+
+  // Mismo tratamiento que Control Chequera: deriva el nombre visible de la
+  // cartola desde nombre_archivo (no hay un campo de nombre por separado).
+  const formatearNombreCartola = (nombre) => {
+    if (!nombre) return 'Cartola'
+    return nombre
+      .replace(/\.(xlsx|xls|csv)$/i, '')
+      .replace(/_/g, ' ')
+      .replace(/Cartola de cuenta Corriente\s*-?\s*/i, 'Cartola ')
+      .replace(/\s+/g, ' ')
+      .trim()
   }
 
   // Fecha efectiva del cheque: la real del banco si ya cayó (fecha_deposito),
@@ -294,7 +326,7 @@ export default function Cheques() {
         ) : (
           <table>
             <thead>
-              <tr><th>N° Cheque</th><th>Emisor / Socio</th><th>Banco emisor</th><th>Monto</th><th>Concepto</th><th>F. depósito</th><th>Estado</th><th>Acciones</th></tr>
+              <tr><th>N° Cheque</th><th>Emisor / Socio</th><th>Banco emisor</th><th>Monto</th><th>Concepto</th><th>F. depósito</th><th>Estado</th><th>En cartola</th><th>Acciones</th></tr>
             </thead>
             <tbody>
               {filtrados.map(c => (
@@ -324,6 +356,24 @@ export default function Cheques() {
                     </td>
                     <td>{estadoBadge(c.estado)}</td>
                     <td>
+                      {(() => {
+                        const mov = c.movimiento_id ? movimientosCartola[c.movimiento_id] : null
+                        if (mov) {
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                              <span style={{ color: '#5dcaa5', fontWeight: 500, fontSize: 12 }}>
+                                {mov.fecha ? mov.fecha.split('-').reverse().join('/') : '—'}
+                              </span>
+                              <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                                {formatearNombreCartola(mov.cartolas?.nombre_archivo)}
+                              </span>
+                            </div>
+                          )
+                        }
+                        return <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic', fontFamily: 'sans-serif' }}>Pendiente</span>
+                      })()}
+                    </td>
+                    <td>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         <button className="btn btn-sm" title="Editar" onClick={() => openEdit(c)}>
                           <i className="ti ti-edit"></i>
@@ -346,7 +396,7 @@ export default function Cheques() {
                   </tr>
                   {amarrarId === c.id && (
                     <tr key={`amarrar-${c.id}`}>
-                      <td colSpan={8} style={{ background: 'rgba(201,168,76,0.05)', padding: '0.75rem 1.5rem' }}>
+                      <td colSpan={9} style={{ background: 'rgba(201,168,76,0.05)', padding: '0.75rem 1.5rem' }}>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Amarrar a movimiento:</span>
                           <select value={movId} onChange={e => setMovId(e.target.value)} style={{ flex: 1, fontSize: 12 }}>
