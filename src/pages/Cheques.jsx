@@ -19,7 +19,7 @@ const EMPTY_FORM = {
 
 export default function Cheques() {
   const { showToast, ToastComponent } = useToast()
-  const { puedeEditar, user } = useAuth()
+  const { puedeEditar } = useAuth()
   const editable = puedeEditar('cheques')
   const [cheques, setCheques] = useState([])
   const [socios, setSocios] = useState([])
@@ -42,16 +42,14 @@ export default function Cheques() {
   useEffect(() => {
     load()
     supabase.from('socios').select('id,nombre,apellido,numero_socio').order('numero_socio').then(({ data }) => setSocios(data || []))
-    // Abonos pendientes (para amarrar) y conciliados (para rescatar un cheque
-    // huérfano consolidándolo con el pago suelto que dejó la conciliación vieja).
-    supabase.from('movimientos').select('id,fecha,descripcion,monto,estado').eq('tipo','abono').in('estado',['pendiente','conciliado']).order('fecha', { ascending: false }).then(({ data }) => setMovimientos(data || []))
+    supabase.from('movimientos').select('id,fecha,descripcion,monto').eq('tipo','abono').eq('estado','pendiente').order('fecha', { ascending: false }).then(({ data }) => setMovimientos(data || []))
   }, [])
 
   const load = async () => {
     setLoading(true)
     const { data, error } = await supabase
       .from('cheques')
-      .select('*, socios(nombre,apellido,numero_socio), movimientos(fecha,descripcion)')
+      .select('*, socios(nombre,apellido,numero_socio)')
       .order('numero', { ascending: false })
     if (error) console.error('Error cargando cheques:', error)
     setCheques(data || [])
@@ -138,20 +136,14 @@ export default function Cheques() {
 
   const handleAmarrar = async (chequeId) => {
     if (!movId) { showToast('Selecciona un movimiento', 'error'); return }
-    // El RPC amarra el cheque, consolida el pago suelto si lo hay (no duplica),
-    // y marca el movimiento conciliado, todo en una sola transacción. La fecha
-    // del banco manda (la setea el RPC).
-    const { error } = await supabase.rpc('amarrar_cheque_a_movimiento', {
-      p_cheque_id: chequeId,
-      p_movimiento_id: movId,
-      p_usuario_id: user?.id || null,
-    })
-    if (error) showToast('Error al amarrar: ' + error.message, 'error')
+    // La fecha del banco manda: el cheque cayó en cartola en la fecha del movimiento.
+    const movFecha = movimientos.find(m => m.id === movId)?.fecha || null
+    const { error } = await supabase.from('cheques').update({ movimiento_id: movId, estado: 'depositado', fecha_deposito: movFecha }).eq('id', chequeId)
+    if (error) showToast('Error al amarrar', 'error')
     else {
+      await supabase.from('movimientos').update({ estado: 'conciliado' }).eq('id', movId)
       showToast('Cheque amarrado a cartola correctamente')
-      setAmarrarId(null); setMovId('')
-      load()
-      supabase.from('movimientos').select('id,fecha,descripcion,monto,estado').eq('tipo','abono').in('estado',['pendiente','conciliado']).order('fecha', { ascending: false }).then(({ data }) => setMovimientos(data || []))
+      setAmarrarId(null); setMovId(''); load()
     }
   }
 
@@ -237,23 +229,6 @@ export default function Cheques() {
     if (estado === 'por_depositar') return <span className="badge badge-pending">Por depositar</span>
     if (estado === 'depositado') return <span className="badge badge-active">Depositado</span>
     return <span className="badge badge-inactive">Anulado</span>
-  }
-
-  // Señal "En cartola": eje separado del estado físico. Indica si el cheque ya
-  // está ligado a un movimiento bancario (conciliado) o sigue suelto.
-  const enCartolaBadge = (c) => {
-    if (c.estado === 'anulado') return null
-    if (c.movimiento_id) {
-      const f = c.movimientos?.fecha
-      return (
-        <span className="badge" style={{ background: 'rgba(29,158,117,0.15)', color: '#5dcaa5', border: '0.5px solid rgba(29,158,117,0.3)' }}
-          title={c.movimientos?.descripcion ? `En cartola: ${c.movimientos.descripcion}` : 'Ligado a un movimiento de cartola'}>
-          <i className="ti ti-link" style={{ marginRight: 3 }}></i>
-          En cartola{f ? ' · ' + f.split('-').reverse().join('/') : ''}
-        </span>
-      )
-    }
-    return <span style={{ fontSize: 11, color: 'var(--text-dim)' }}><i className="ti ti-unlink" style={{ marginRight: 3 }}></i>Sin conciliar</span>
   }
 
   const limpiarFiltros = () => { setFiltroEstado('todos'); setFiltroSocio(''); setFiltroConcepto('') }
@@ -347,25 +322,17 @@ export default function Cheques() {
                         return c.fecha_deposito ? txt : <span title="Fecha planificada (a fecha) — aún no cae en cartola">{txt} *</span>
                       })()}
                     </td>
-                    <td>
-                      {estadoBadge(c.estado)}
-                      <div style={{ marginTop: 4 }}>{enCartolaBadge(c)}</div>
-                    </td>
+                    <td>{estadoBadge(c.estado)}</td>
                     <td>
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         <button className="btn btn-sm" title="Editar" onClick={() => openEdit(c)}>
                           <i className="ti ti-edit"></i>
                         </button>
-                        {/* Amarrar: en cualquier cheque sin conciliar (por depositar o
-                            depositado huérfano), para poder rescatar los depositados
-                            que quedaron con movimiento_id null. */}
-                        {!c.movimiento_id && c.estado !== 'anulado' && (
-                          <button className="btn btn-sm" onClick={() => setAmarrarId(amarrarId === c.id ? null : c.id)}>
-                            <i className="ti ti-link"></i> Amarrar
-                          </button>
-                        )}
                         {c.estado === 'por_depositar' && (
                           <>
+                            <button className="btn btn-sm" onClick={() => setAmarrarId(amarrarId === c.id ? null : c.id)}>
+                              <i className="ti ti-link"></i> Amarrar
+                            </button>
                             <button className="btn btn-sm" onClick={() => handleCambiarEstado(c.id, 'depositado')}>
                               <i className="ti ti-check"></i>
                             </button>
@@ -384,11 +351,9 @@ export default function Cheques() {
                           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Amarrar a movimiento:</span>
                           <select value={movId} onChange={e => setMovId(e.target.value)} style={{ flex: 1, fontSize: 12 }}>
                             <option value="">Seleccionar movimiento de cartola…</option>
-                            {/* Solo movimientos del mismo monto que el cheque (el RPC exige
-                                monto exacto). Los conciliados aparecen para consolidar huérfanos. */}
-                            {movimientos.filter(m => Math.abs(m.monto) === c.monto).map(m => (
+                            {movimientos.map(m => (
                               <option key={m.id} value={m.id}>
-                                {m.fecha.split('-').reverse().join('/')} — {m.descripcion} — {formatearMontoConSimbolo(Math.abs(m.monto))}{m.estado === 'conciliado' ? ' (conciliado)' : ''}
+                                {m.fecha.split('-').reverse().join('/')} — {m.descripcion} — {formatearMontoConSimbolo(Math.abs(m.monto))}
                               </option>
                             ))}
                           </select>

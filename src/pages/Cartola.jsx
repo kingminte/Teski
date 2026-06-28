@@ -52,7 +52,6 @@ export default function Cartola() {
   const [otrosIngresosForm, setOtrosIngresosForm] = useState({})
   const [candidatos, setCandidatos] = useState([]) // ingresos manuales sin movimiento_id, normalizados
   const [calzando, setCalzando] = useState({}) // { movId: true } mientras corre el RPC
-  const [selectorAmarre, setSelectorAmarre] = useState(null) // { mov, candidatos, modo } cuando hay varios cheques que calzan
 
   // Carga todos los ingresos manuales aún no conciliados (sin movimiento_id) y los
   // normaliza a una forma común para el matcher: { tipo, id, monto, fecha, socio, concepto, detalle }.
@@ -413,54 +412,19 @@ export default function Cartola() {
     })
   }
 
-  // Busca cheques del socio que calzan el monto exacto del movimiento y aún
-  // no están amarrados (movimiento_id null). estado = 'depositado' para el
-  // auto-amarre (Cambio 1); 'por_depositar' para la confirmación (Cambio 2).
-  const buscarChequesCalce = async (socioId, monto, estado) => {
-    if (!socioId) return []
-    const { data } = await supabase.from('cheques')
-      .select('id, numero, monto, fecha_deposito, fecha_documento, fecha_recepcion, concepto, estado, socio_id, socios(nombre,apellido)')
-      .eq('socio_id', socioId).eq('monto', monto).eq('estado', estado)
-      .is('movimiento_id', null)
-    return data || []
-  }
+  const handleConfirmarCalce = async (mov) => {
+    const c = conciliando[mov.id]
+    if (!c?.lineas?.length) return
 
-  // Ordena candidatos por cercanía de fecha de depósito al movimiento.
-  const ordenarPorCercania = (cands, fechaMov) => {
-    const diff = (c) => {
-      const f = c.fecha_deposito || c.fecha_documento || c.fecha_recepcion
-      return f ? Math.abs(new Date(f) - new Date(fechaMov)) : Infinity
-    }
-    return [...cands].sort((a, b) => diff(a) - diff(b))
-  }
-
-  // Amarra un cheque al movimiento vía el RPC atómico (no crea pago duplicado).
-  const amarrarChequeMovimiento = async (mov, cheque) => {
-    const { error } = await supabase.rpc('amarrar_cheque_a_movimiento', {
-      p_cheque_id: cheque.id,
-      p_movimiento_id: mov.id,
-      p_usuario_id: user?.id || null,
-    })
-    if (error) { showToast('Error al amarrar cheque: ' + error.message, 'error'); return false }
-    setConciliando(prev => { const n = { ...prev }; delete n[mov.id]; return n })
-    setSelectorAmarre(null)
-    showToast(`Cheque N°${cheque.numero} amarrado al depósito`)
-    loadMovimientos(selectedCartola.id)
-    loadCandidatos()
-    loadPagosSinConciliar()
-    return true
-  }
-
-  // Registra la distribución manual en líneas (comportamiento clásico): crea
-  // un pagos_cuota por cada línea y marca el movimiento conciliado.
-  const registrarDistribucionManual = async (mov, c) => {
     const montoTotal = Math.abs(mov.monto)
     const { distribuido, restante, completo, excede } = calcularDistribucion(c.lineas, montoTotal)
+
     if (!completo) {
       if (excede) showToast('La distribución supera el monto de la transferencia', 'error')
       else showToast(`Falta distribuir ${formatearMontoConSimbolo(restante)}. Agrega otra línea o ajusta los montos.`, 'error')
       return
     }
+
     try {
       for (const linea of c.lineas) {
         const montoLinea = parsearMonto(linea.monto)
@@ -486,51 +450,11 @@ export default function Cartola() {
       }).eq('id', mov.id)
 
       setConciliando(prev => ({ ...prev, [mov.id]: { ...c, confirmado: true, abierto: false } }))
-      setSelectorAmarre(null)
       showToast(`Calce confirmado — ${c.lineas.length} pago(s) registrado(s)`)
       loadMovimientos(selectedCartola.id)
-      loadPagosSinConciliar()
     } catch (err) {
       showToast(err.message, 'error')
     }
-  }
-
-  const handleConfirmarCalce = async (mov) => {
-    const c = conciliando[mov.id]
-    if (!c?.lineas?.length) return
-    const montoTotal = Math.abs(mov.monto)
-    const socioNombre = mov.socios ? `${mov.socios.nombre} ${mov.socios.apellido}` : 'el socio'
-
-    // Cambio 1 — ¿hay un cheque DEPOSITADO del socio que calza el monto total?
-    // El depósito probablemente ES ese cheque: amarrarlo en vez de duplicar.
-    const depositados = await buscarChequesCalce(mov.socio_id, montoTotal, 'depositado')
-    if (depositados.length === 1) {
-      const ch = depositados[0]
-      const fd = (ch.fecha_deposito || ch.fecha_documento || '')
-      if (confirm(`Hay un cheque DEPOSITADO de ${socioNombre} que calza este depósito:\n\n  N°${ch.numero} · ${formatearMontoConSimbolo(ch.monto)}${fd ? ' · ' + fd.split('-').reverse().join('/') : ''}\n\nAceptar = amarrar ese cheque (no se crea un pago nuevo).\nCancelar = registrar la distribución manual que armaste.`)) {
-        await amarrarChequeMovimiento(mov, ch)
-        return
-      }
-      // Cancela → sigue con la distribución manual de abajo
-    } else if (depositados.length > 1) {
-      // Varios cheques depositados del mismo monto → que el usuario elija.
-      setSelectorAmarre({ mov, candidatos: ordenarPorCercania(depositados, mov.fecha), modo: 'depositado' })
-      return
-    } else {
-      // Cambio 2 — sin cheque depositado, pero ¿hay uno 'por depositar' que cuadra?
-      const porDepositar = await buscarChequesCalce(mov.socio_id, montoTotal, 'por_depositar')
-      if (porDepositar.length >= 1) {
-        const ch = ordenarPorCercania(porDepositar, mov.fecha)[0]
-        const fp = (ch.fecha_documento || ch.fecha_recepcion || '')
-        if (confirm(`Hay un cheque POR DEPOSITAR de ${socioNombre} que cuadra con este depósito:\n\n  N°${ch.numero} · ${formatearMontoConSimbolo(ch.monto)}${fp ? ' · ' + fp.split('-').reverse().join('/') : ''}\n\n¿Marcarlo como depositado y amarrarlo a este movimiento?`)) {
-          await amarrarChequeMovimiento(mov, ch)
-          return
-        }
-        // Cancela → comportamiento actual (distribución manual)
-      }
-    }
-
-    await registrarDistribucionManual(mov, c)
   }
 
   const handleAsignarSocio = async (movId, socioId) => {
@@ -1605,49 +1529,6 @@ export default function Cartola() {
             )}
           </div>
         </>
-      )}
-
-      {selectorAmarre && (
-        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setSelectorAmarre(null)}>
-          <div className="modal" style={{ width: 560 }}>
-            <div className="modal-header">
-              <div className="modal-title"><i className="ti ti-link"></i> ¿Qué cheque amarrar?</div>
-              <button className="btn btn-sm" onClick={() => setSelectorAmarre(null)}><i className="ti ti-x"></i></button>
-            </div>
-            <div style={{ padding: '0 1.25rem 0.5rem', fontSize: 13, color: 'var(--text-muted)' }}>
-              {selectorAmarre.mov.socios ? `${selectorAmarre.mov.socios.nombre} ${selectorAmarre.mov.socios.apellido}` : 'El socio'} tiene varios cheques depositados de {formatearMontoConSimbolo(Math.abs(selectorAmarre.mov.monto))} sin conciliar. Elige cuál corresponde a este depósito ({selectorAmarre.mov.fecha?.split('-').reverse().join('/')}):
-            </div>
-            <div style={{ padding: '0.5rem 1.25rem', display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {selectorAmarre.candidatos.map((ch, i) => {
-                const fd = ch.fecha_deposito || ch.fecha_documento || ''
-                return (
-                  <button key={ch.id} className="btn" style={{ justifyContent: 'space-between', textAlign: 'left' }}
-                    onClick={() => amarrarChequeMovimiento(selectorAmarre.mov, ch)}>
-                    <span>
-                      <i className="ti ti-writing" style={{ marginRight: 6 }}></i>
-                      Cheque N°{ch.numero}
-                      {i === 0 && <span className="badge badge-active" style={{ marginLeft: 8 }}>Fecha más cercana</span>}
-                    </span>
-                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                      {fd ? 'dep. ' + fd.split('-').reverse().join('/') : 'sin fecha'} · {formatearMontoConSimbolo(ch.monto)}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-            <div className="modal-footer" style={{ justifyContent: 'space-between' }}>
-              <button className="btn" onClick={() => {
-                const mov = selectorAmarre.mov
-                const c = conciliando[mov.id]
-                setSelectorAmarre(null)
-                if (c) registrarDistribucionManual(mov, c)
-              }}>
-                Registrar distribución manual
-              </button>
-              <button className="btn" onClick={() => setSelectorAmarre(null)}>Cancelar</button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   )
