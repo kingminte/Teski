@@ -1,0 +1,3 @@
+create or replace function obtener_token_credencial(p_socio_id uuid) returns text language plpgsql as $$ declare v_token text; begin if p_socio_id is null then return null; end if; select token into v_token from credencial_tokens where socio_id = p_socio_id and expires_at = 'infinity'::timestamptz limit 1; if v_token is not null then return v_token; end if; v_token := gen_credencial_token_efimero(); insert into credencial_tokens (token, socio_id, expires_at) values (v_token, p_socio_id, 'infinity'::timestamptz); return v_token; end; $$;
+grant execute on function obtener_token_credencial(uuid) to anon, authenticated;
+notify pgrst, 'reload schema';

@@ -1,38 +1,67 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { toPng } from 'html-to-image'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/useAuth'
 import { useToast } from '../lib/useToast.jsx'
 import CredencialCard from '../components/CredencialCard'
-import { urlPublica } from '../lib/credencial'
-import { useCredencialToken } from '../lib/useCredencialToken'
+import { urlPublica, obtenerTokenEstable } from '../lib/credencial'
 
 export default function MiCredencial() {
   const { user } = useAuth()
-  const { ToastComponent } = useToast()
+  const { showToast, ToastComponent } = useToast()
   // El acceso depende de tener un socio vinculado (socio_id), no del rol.
   const miSocioId = user?.socio_id
 
   const [socio, setSocio] = useState(null)
   const [beneficiarios, setBeneficiarios] = useState([])
+  const [token, setToken] = useState(null)
   const [loading, setLoading] = useState(true)
-
-  // Token efímero rotativo (60s). Se llama siempre (regla de hooks).
-  const { token, segundos, total, sinConexion } = useCredencialToken(miSocioId)
+  const [bajando, setBajando] = useState(false)
+  const cardRef = useRef(null)
 
   useEffect(() => { if (miSocioId) load() }, [miSocioId])
 
   const load = async () => {
     setLoading(true)
-    const [{ data: soc }, { data: benes }] = await Promise.all([
+    // Token ESTABLE por socio (get-or-create): el QR es fijo y compartible.
+    const [{ data: soc }, { data: benes }, tk] = await Promise.all([
       supabase.from('socios')
         .select('id,numero_socio,nombre,apellido,estado')
         .eq('id', miSocioId).maybeSingle(),
       supabase.from('beneficiarios')
         .select('nombre,apellido,estado').eq('socio_id', miSocioId),
+      obtenerTokenEstable(miSocioId),
     ])
     setSocio(soc || null)
     setBeneficiarios(benes || [])
+    setToken(tk || null)
     setLoading(false)
+  }
+
+  const descargar = async () => {
+    if (!cardRef.current) return
+    setBajando(true)
+    try {
+      const dataUrl = await toPng(cardRef.current, { pixelRatio: 3, cacheBust: true })
+      const a = document.createElement('a')
+      a.download = `credencial-${socio.numero_socio}.png`
+      a.href = dataUrl
+      a.click()
+    } catch {
+      showToast('No se pudo generar la imagen', 'error')
+    } finally {
+      setBajando(false)
+    }
+  }
+
+  const compartir = async () => {
+    const url = urlPublica(token)
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Mi Credencial — Teski Club', url }) } catch { /* cancelado */ }
+    } else {
+      try { await navigator.clipboard.writeText(url); showToast('Enlace copiado al portapapeles') }
+      catch { showToast('No se pudo copiar el enlace', 'error') }
+    }
   }
 
   if (!miSocioId) {
@@ -53,7 +82,6 @@ export default function MiCredencial() {
   }
 
   const url = urlPublica(token)
-  const pct = Math.round((segundos / total) * 100)
 
   return (
     <div style={{ maxWidth: 520, margin: '0 auto' }}>
@@ -61,34 +89,24 @@ export default function MiCredencial() {
       <div style={{ marginBottom: 18 }}>
         <h2 style={{ margin: 0, color: 'var(--gold-light)', fontSize: 20 }}>Mi Credencial</h2>
         <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
-          Credencial digital del socio. El QR se renueva cada 60 segundos por seguridad.
+          Credencial digital del socio. Validable por QR.
         </div>
       </div>
 
-      <CredencialCard socio={socio} beneficiarios={beneficiarios} url={url} />
+      <CredencialCard ref={cardRef} socio={socio} beneficiarios={beneficiarios} url={url} />
 
-      {/* Countdown + barra de progreso */}
-      <div style={{ marginTop: 14 }}>
-        {sinConexion ? (
-          <div style={{ fontSize: 12, color: '#fac775', fontFamily: 'sans-serif', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <i className="ti ti-wifi-off"></i> Sin conexión — no se pudo emitir el QR. Reintentando al recargar.
-          </div>
-        ) : (
-          <>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginBottom: 5 }}>
-              <span>Código de verificación</span>
-              <span>Se renueva en {segundos}s</span>
-            </div>
-            <div style={{ height: 6, background: 'rgba(201,168,76,0.15)', borderRadius: 3, overflow: 'hidden' }}>
-              <div style={{ width: `${pct}%`, height: '100%', background: 'var(--gold)', borderRadius: 3, transition: 'width 1s linear' }}></div>
-            </div>
-          </>
-        )}
+      <div style={{ display: 'flex', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" onClick={descargar} disabled={bajando}>
+          <i className="ti ti-download"></i> {bajando ? 'Generando…' : 'Descargar imagen'}
+        </button>
+        <button className="btn" onClick={compartir}>
+          <i className="ti ti-share"></i> Compartir
+        </button>
       </div>
 
       <div style={{ marginTop: 18, fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-        Muestra este código al validador. Se renueva automáticamente cada 60 segundos: no sirve compartirlo ni
-        sacarle captura, porque vence enseguida.
+        Esta credencial es validable escaneando el código QR o ingresando a{' '}
+        <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{url}</span>
       </div>
     </div>
   )
