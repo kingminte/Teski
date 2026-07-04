@@ -25,6 +25,7 @@ import ClasesConfig from './pages/ClasesConfig'
 import SolicitarClase from './pages/SolicitarClase'
 import GestionarClases from './pages/GestionarClases'
 import ReporteClases from './pages/ReporteClases'
+import Bitacora from './pages/Bitacora'
 import Beneficios from './pages/Beneficios'
 import Comunicaciones from './pages/Comunicaciones'
 import ArchivosDirectorio from './pages/ArchivosDirectorio'
@@ -112,6 +113,7 @@ export default function App() {
           <Route path="/clases/catalogos" element={<ClasesCatalogos />} />
           <Route path="/clases/config" element={<ClasesConfig />} />
           <Route path="/clases/reporte" element={<ReporteClases />} />
+          <Route path="/clases/bitacora" element={<Bitacora />} />
           <Route path="/beneficios" element={<Beneficios />} />
           <Route path="/comunicaciones" element={<Comunicaciones />} />
           <Route path="/directorio/archivos" element={<ArchivosDirectorio />} />

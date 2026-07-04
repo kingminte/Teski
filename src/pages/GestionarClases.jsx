@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
 import { useAuth } from '../lib/useAuth'
+import BitacoraFormModal from '../components/BitacoraFormModal'
 
 const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
 const hoyISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
@@ -32,6 +33,15 @@ export default function GestionarClases() {
   const { showToast, ToastComponent } = useToast()
   const { puedeEditar, user } = useAuth()
   const editable = puedeEditar('clases_gestion')
+  const puedeFeedback = puedeEditar('clases_bitacora')   // admin/andacor: escribir bitácora
+
+  // Feedback (bitácora): alumno + contexto de la clase para el formulario reutilizable
+  const [feedbackCtx, setFeedbackCtx] = useState(null)   // { alumno, fecha, grupoId }
+  const openFeedback = (r, g) => setFeedbackCtx({
+    alumno: { participante_tipo: r.participante_tipo, participante_id: r.participante_id, socio_id: r.socio_id, nombre: r.participanteNombre },
+    fecha: g.fecha,
+    grupoId: g.id,
+  })
 
   const [disponibilidad, setDisponibilidad] = useState([])
   const [fechaSel, setFechaSel] = useState('')
@@ -438,6 +448,12 @@ export default function GestionarClases() {
                                 <span key={r.id} className="chip" style={{ fontSize: 11, opacity: fue ? 1 : 0.55, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                                   {r.participanteNombre}
                                   <i className={`ti ${fue ? 'ti-check' : 'ti-x'}`} style={{ fontSize: 11, color: fue ? '#5dcaa5' : '#f09595' }}></i>
+                                  {puedeFeedback && (
+                                    <button onClick={() => openFeedback(r, g)} title="Escribir feedback"
+                                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--gold-light)', display: 'inline-flex', alignItems: 'center' }}>
+                                      <i className="ti ti-message-plus" style={{ fontSize: 12 }}></i>
+                                    </button>
+                                  )}
                                 </span>
                               )
                             })}
@@ -451,6 +467,12 @@ export default function GestionarClases() {
                                   <button onClick={() => openAgrupar(r)} title="Mover a otro grupo"
                                     style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center' }}>
                                     <i className="ti ti-arrows-exchange" style={{ fontSize: 12 }}></i>
+                                  </button>
+                                )}
+                                {puedeFeedback && (
+                                  <button onClick={() => openFeedback(r, g)} title="Escribir feedback"
+                                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--gold-light)', display: 'inline-flex', alignItems: 'center' }}>
+                                    <i className="ti ti-message-plus" style={{ fontSize: 12 }}></i>
                                   </button>
                                 )}
                               </span>
@@ -660,6 +682,15 @@ export default function GestionarClases() {
           </div>
         )
       })()}
+
+      {/* Modal Feedback (bitácora) — formulario reutilizable */}
+      {feedbackCtx && (
+        <BitacoraFormModal
+          alumno={feedbackCtx.alumno} fecha={feedbackCtx.fecha} grupoId={feedbackCtx.grupoId}
+          showToast={showToast}
+          onClose={() => setFeedbackCtx(null)}
+        />
+      )}
 
       {/* Modal Confirmar asistencia */}
       {marcarGrupo && (() => {
