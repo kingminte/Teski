@@ -59,6 +59,12 @@ export default function GestionarClases() {
   const [formEdit, setFormEdit] = useState(EMPTY_GRUPO)
   const [guardandoEdit, setGuardandoEdit] = useState(false)
 
+  // Dividir grupo (mover varios alumnos a un grupo nuevo)
+  const [dividirGrupo, setDividirGrupo] = useState(null)   // grupo origen (agendada)
+  const [dividirSel, setDividirSel] = useState({})         // solicitud_id -> bool (van al grupo nuevo)
+  const [dividirForm, setDividirForm] = useState(EMPTY_GRUPO)
+  const [guardandoDividir, setGuardandoDividir] = useState(false)
+
   const nivelNombre = (id) => niveles.find(n => n.id === id)?.nombre || '—'
 
   useEffect(() => { loadBase() }, [])
@@ -146,12 +152,16 @@ export default function GestionarClases() {
     return user?.rol === 'admin'
   }
 
-  // ----- Agrupar -----
+  // ----- Agrupar / Mover -----
+  // Destinos válidos para una solicitud: mismo tipo, solo grupos 'agendada'
+  // y (al mover) excluyendo el grupo origen. Sirve para agrupar un pendiente
+  // y para mover un alumno del roster de un grupo agendada a otro.
+  const gruposDestinoDe = (sol) => grupos.filter(g => g.tipo === sol.tipo && g.estado === 'agendada' && g.id !== sol.grupo_id)
   const openAgrupar = (sol) => {
-    const gruposMismoTipo = grupos.filter(g => g.tipo === sol.tipo)
+    const destinos = gruposDestinoDe(sol)
     setAgruparSol(sol)
-    setAgruparModo(gruposMismoTipo.length > 0 ? 'existente' : 'nuevo')
-    setAgruparGrupoId(gruposMismoTipo[0]?.id || '')
+    setAgruparModo(destinos.length > 0 ? 'existente' : 'nuevo')
+    setAgruparGrupoId(destinos[0]?.id || '')
     setNuevoGrupo(EMPTY_GRUPO)
   }
   // Detecta si el profesor ya tiene otra clase que solapa en horario el mismo día.
@@ -177,6 +187,7 @@ export default function GestionarClases() {
 
   const handleConfirmarAgrupar = async () => {
     const sol = agruparSol
+    const moviendo = !!sol.grupo_id
     setGuardandoAgrupar(true)
     try {
       let grupoId = agruparGrupoId
@@ -194,11 +205,11 @@ export default function GestionarClases() {
       if (!grupoId) { showToast('Elige o crea un grupo', 'error'); setGuardandoAgrupar(false); return }
       const { error: e2 } = await supabase.from('clases_solicitudes').update({ grupo_id: grupoId, estado: 'agendada' }).eq('id', sol.id)
       if (e2) throw new Error(e2.message)
-      showToast('Solicitud agendada')
+      showToast(moviendo ? 'Alumno movido' : 'Solicitud agendada')
       setAgruparSol(null)
       loadFecha(fechaSel)
     } catch (e) {
-      showToast('Error al agrupar: ' + e.message, 'error')
+      showToast('Error al ' + (moviendo ? 'mover' : 'agrupar') + ': ' + e.message, 'error')
     }
     setGuardandoAgrupar(false)
   }
@@ -228,6 +239,44 @@ export default function GestionarClases() {
     if (e2) { showToast('Error al eliminar grupo: ' + e2.message, 'error'); return }
     showToast('Grupo eliminado')
     loadFecha(fechaSel)
+  }
+
+  // ----- Dividir grupo (solo agendada) -----
+  // Crea un 2º grupo agendada (hereda tipo/horario/profesor del original, editable)
+  // y mueve las solicitudes seleccionadas a él. Reusa detectarConflictoProfesor.
+  const openDividir = (g) => {
+    setDividirGrupo(g)
+    setDividirSel({})
+    setDividirForm({ hora_inicio: hhmm(g.hora_inicio), hora_fin: hhmm(g.hora_fin), profesor_id: g.profesor_id || '', comentario: g.comentario || '' })
+  }
+  const toggleDividirSel = (solId) => setDividirSel(prev => ({ ...prev, [solId]: !prev[solId] }))
+
+  const handleConfirmarDividir = async () => {
+    const g = dividirGrupo
+    const roster = rosterDe(g.id)
+    const seleccionados = roster.filter(r => dividirSel[r.id])
+    if (seleccionados.length === 0) { showToast('Selecciona al menos un alumno para el nuevo grupo', 'error'); return }
+    if (seleccionados.length === roster.length) { showToast('Deja al menos un alumno en el grupo original', 'error'); return }
+    if (!dividirForm.hora_inicio || !dividirForm.hora_fin) { showToast('Indica hora de inicio y fin', 'error'); return }
+    // Mismo profesor y horario que el original solaparía con el propio original → conflicto real (no se puede clonar).
+    const conflicto = detectarConflictoProfesor({ profesorId: dividirForm.profesor_id || null, horaIni: dividirForm.hora_inicio, horaFin: dividirForm.hora_fin, fecha: g.fecha })
+    if (conflicto) { showToast(msgConflicto(conflicto), 'error'); return }
+    setGuardandoDividir(true)
+    try {
+      const { data, error } = await supabase.from('clases_grupos').insert({
+        fecha: g.fecha, hora_inicio: dividirForm.hora_inicio, hora_fin: dividirForm.hora_fin,
+        tipo: g.tipo, profesor_id: dividirForm.profesor_id || null, comentario: dividirForm.comentario || null, estado: 'agendada',
+      }).select().single()
+      if (error) throw new Error(error.message)
+      const { error: e2 } = await supabase.from('clases_solicitudes').update({ grupo_id: data.id, estado: 'agendada' }).in('id', seleccionados.map(s => s.id))
+      if (e2) throw new Error(e2.message)
+      showToast(`Grupo dividido: ${seleccionados.length} alumno${seleccionados.length === 1 ? '' : 's'} al nuevo grupo`)
+      setDividirGrupo(null)
+      loadFecha(fechaSel)
+    } catch (e) {
+      showToast('Error al dividir: ' + e.message, 'error')
+    }
+    setGuardandoDividir(false)
   }
 
   // ----- Marcar realizada / desmarcar -----
@@ -267,7 +316,8 @@ export default function GestionarClases() {
     loadFecha(fechaSel)
   }
 
-  const gruposMismoTipo = agruparSol ? grupos.filter(g => g.tipo === agruparSol.tipo) : []
+  const gruposDestino = agruparSol ? gruposDestinoDe(agruparSol) : []
+  const esMover = !!agruparSol?.grupo_id
 
   if (disponibilidad.length === 0 && !loading) {
     return (
@@ -394,17 +444,35 @@ export default function GestionarClases() {
                           </div>
                         ) : (
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                            {roster.map(r => <span key={r.id} className="chip" style={{ fontSize: 11 }}>{r.participanteNombre}</span>)}
+                            {roster.map(r => (
+                              <span key={r.id} className="chip" style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                {r.participanteNombre}
+                                {editable && (
+                                  <button onClick={() => openAgrupar(r)} title="Mover a otro grupo"
+                                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center' }}>
+                                    <i className="ti ti-arrows-exchange" style={{ fontSize: 12 }}></i>
+                                  </button>
+                                )}
+                              </span>
+                            ))}
                           </div>
                         )}
 
                         {editable && (
                           <div style={{ marginTop: 8, paddingTop: 8, borderTop: '0.5px solid rgba(201,168,76,0.08)' }}>
                             {!marcada ? (
-                              <button className="btn btn-sm btn-primary" style={{ fontSize: 11 }} disabled={vacio} onClick={() => openMarcar(g)}
-                                title={vacio ? 'No hay participantes para marcar' : 'Marcar asistencia y cerrar la clase'}>
-                                <i className="ti ti-checkbox"></i> Marcar realizada
-                              </button>
+                              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                <button className="btn btn-sm btn-primary" style={{ fontSize: 11 }} disabled={vacio} onClick={() => openMarcar(g)}
+                                  title={vacio ? 'No hay participantes para marcar' : 'Marcar asistencia y cerrar la clase'}>
+                                  <i className="ti ti-checkbox"></i> Marcar realizada
+                                </button>
+                                {roster.length >= 2 && (
+                                  <button className="btn btn-sm" style={{ fontSize: 11 }} onClick={() => openDividir(g)}
+                                    title="Mover algunos alumnos a un grupo nuevo">
+                                    <i className="ti ti-arrows-split-2"></i> Dividir
+                                  </button>
+                                )}
+                              </div>
                             ) : (
                               <button className="btn btn-sm" style={{ fontSize: 11, color: desmarcable ? '#fac775' : 'var(--text-dim)', borderColor: desmarcable ? 'rgba(239,159,39,0.4)' : 'var(--border)' }}
                                 disabled={!desmarcable} onClick={() => desmarcable && handleDesmarcar(g)}
@@ -444,16 +512,16 @@ export default function GestionarClases() {
         <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setAgruparSol(null)}>
           <div className="modal" style={{ width: 480, maxWidth: '95vw' }}>
             <div className="modal-header">
-              <div className="modal-title">Agrupar: {agruparSol.participanteNombre} <TipoBadge tipo={agruparSol.tipo} /></div>
+              <div className="modal-title">{esMover ? 'Mover' : 'Agrupar'}: {agruparSol.participanteNombre} <TipoBadge tipo={agruparSol.tipo} /></div>
               <button className="btn btn-sm" onClick={() => setAgruparSol(null)}><i className="ti ti-x"></i></button>
             </div>
             <div style={{ padding: '0.5rem 1rem 1rem' }}>
               <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                <button onClick={() => setAgruparModo('existente')} disabled={gruposMismoTipo.length === 0}
-                  style={{ flex: 1, padding: '8px', borderRadius: 8, cursor: gruposMismoTipo.length ? 'pointer' : 'not-allowed', fontFamily: 'sans-serif', fontSize: 12,
+                <button onClick={() => setAgruparModo('existente')} disabled={gruposDestino.length === 0}
+                  style={{ flex: 1, padding: '8px', borderRadius: 8, cursor: gruposDestino.length ? 'pointer' : 'not-allowed', fontFamily: 'sans-serif', fontSize: 12,
                     border: `1px solid ${agruparModo === 'existente' ? 'var(--gold)' : 'var(--border)'}`, background: agruparModo === 'existente' ? 'rgba(201,168,76,0.12)' : 'transparent',
-                    color: gruposMismoTipo.length === 0 ? 'var(--text-dim)' : (agruparModo === 'existente' ? 'var(--gold-light)' : 'var(--text-muted)') }}>
-                  Grupo existente ({gruposMismoTipo.length})
+                    color: gruposDestino.length === 0 ? 'var(--text-dim)' : (agruparModo === 'existente' ? 'var(--gold-light)' : 'var(--text-muted)') }}>
+                  Grupo existente ({gruposDestino.length})
                 </button>
                 <button onClick={() => setAgruparModo('nuevo')}
                   style={{ flex: 1, padding: '8px', borderRadius: 8, cursor: 'pointer', fontFamily: 'sans-serif', fontSize: 12,
@@ -465,7 +533,7 @@ export default function GestionarClases() {
 
               {agruparModo === 'existente' ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {gruposMismoTipo.map(g => (
+                  {gruposDestino.map(g => (
                     <label key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: `0.5px solid ${agruparGrupoId === g.id ? 'var(--gold)' : 'var(--border)'}`, borderRadius: 8, cursor: 'pointer' }}>
                       <input type="radio" name="grupo" checked={agruparGrupoId === g.id} onChange={() => setAgruparGrupoId(g.id)} />
                       <span style={{ fontSize: 13, color: '#c8d0dc' }}>{hhmm(g.hora_inicio)}–{hhmm(g.hora_fin)}</span>
@@ -490,7 +558,7 @@ export default function GestionarClases() {
             <div className="modal-footer">
               <button className="btn" onClick={() => setAgruparSol(null)}>Cancelar</button>
               <button className="btn btn-primary" onClick={handleConfirmarAgrupar} disabled={guardandoAgrupar || (agruparModo === 'existente' && !agruparGrupoId)}>
-                {guardandoAgrupar ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-check"></i> Agrupar</>}
+                {guardandoAgrupar ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-check"></i> {esMover ? 'Mover' : 'Agrupar'}</>}
               </button>
             </div>
           </div>
@@ -525,6 +593,73 @@ export default function GestionarClases() {
           </div>
         </div>
       )}
+
+      {/* Modal Dividir grupo */}
+      {dividirGrupo && (() => {
+        const roster = rosterDe(dividirGrupo.id)
+        const seleccionados = roster.filter(r => dividirSel[r.id]).length
+        const quedan = roster.length - seleccionados
+        const dur = duracionHorasDe({ hora_inicio: dividirForm.hora_inicio, hora_fin: dividirForm.hora_fin })
+        return (
+          <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setDividirGrupo(null)}>
+            <div className="modal" style={{ width: 520, maxWidth: '95vw' }}>
+              <div className="modal-header">
+                <div className="modal-title">Dividir grupo <TipoBadge tipo={dividirGrupo.tipo} /></div>
+                <button className="btn btn-sm" onClick={() => setDividirGrupo(null)}><i className="ti ti-x"></i></button>
+              </div>
+              <div style={{ padding: '0.5rem 1rem 1rem' }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif', marginBottom: 12 }}>
+                  Grupo original: {fmtDiaFecha(dividirGrupo.fecha)} · {hhmm(dividirGrupo.hora_inicio)}–{hhmm(dividirGrupo.hora_fin)}. Marca los alumnos que pasan al nuevo grupo.
+                </div>
+
+                <label style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif' }}>Alumnos al nuevo grupo</label>
+                <div style={{ marginTop: 6, marginBottom: 14, border: '0.5px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+                  {roster.map(r => {
+                    const va = !!dividirSel[r.id]
+                    return (
+                      <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderBottom: '0.5px solid rgba(201,168,76,0.08)', opacity: va ? 1 : 0.6 }}>
+                        <input type="checkbox" checked={va} onChange={() => toggleDividirSel(r.id)} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, color: '#c8d0dc' }}>{r.participanteNombre}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                            {r.participante_tipo === 'beneficiario' ? `Hijo/a de ${r.socioNombre}` : 'Socio titular'} · Nivel: {nivelNombre(r.nivel_id)}
+                          </div>
+                        </div>
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 5, background: va ? 'rgba(201,168,76,0.15)' : 'rgba(120,130,145,0.12)', color: va ? 'var(--gold-light)' : 'var(--text-dim)' }}>
+                          {va ? 'Nuevo grupo' : 'Se queda'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <label style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif' }}>Datos del nuevo grupo</label>
+                <div className="form-grid" style={{ marginTop: 6 }}>
+                  <div className="form-group"><label>Hora inicio</label><input type="time" value={dividirForm.hora_inicio} onChange={e => setDividirForm(f => ({ ...f, hora_inicio: e.target.value }))} /></div>
+                  <div className="form-group"><label>Hora fin</label><input type="time" value={dividirForm.hora_fin} onChange={e => setDividirForm(f => ({ ...f, hora_fin: e.target.value }))} /></div>
+                  <div className="form-group full"><label>Profesor</label>
+                    <select value={dividirForm.profesor_id} onChange={e => setDividirForm(f => ({ ...f, profesor_id: e.target.value }))}>
+                      <option value="">— sin asignar —</option>
+                      {profesores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                    </select>
+                  </div>
+                  <div className="form-group full"><label>Comentario (opcional)</label><input value={dividirForm.comentario} onChange={e => setDividirForm(f => ({ ...f, comentario: e.target.value }))} /></div>
+                </div>
+
+                <div style={{ marginTop: 12, padding: '0.7rem 0.9rem', borderRadius: 8, fontSize: 12, fontFamily: 'sans-serif', background: 'rgba(239,159,39,0.1)', border: '0.5px solid rgba(239,159,39,0.3)', color: '#fac775' }}>
+                  <i className="ti ti-info-circle"></i> Se crea una 2ª clase de <strong>{labelHoras(dur)}</strong>. Al marcarse realizada sumará horas-profesor al corte abierto (correcto: son dos clases). No afecta cortes cerrados.
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button className="btn" onClick={() => setDividirGrupo(null)}>Cancelar</button>
+                <button className="btn btn-primary" onClick={handleConfirmarDividir} disabled={guardandoDividir || seleccionados === 0 || quedan === 0}>
+                  {guardandoDividir ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-arrows-split-2"></i> Dividir ({seleccionados})</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Modal Confirmar asistencia */}
       {marcarGrupo && (() => {
