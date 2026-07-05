@@ -26,6 +26,7 @@ import SolicitarClase from './pages/SolicitarClase'
 import GestionarClases from './pages/GestionarClases'
 import ReporteClases from './pages/ReporteClases'
 import Bitacora from './pages/Bitacora'
+import MiBitacora from './pages/MiBitacora'
 import Beneficios from './pages/Beneficios'
 import Comunicaciones from './pages/Comunicaciones'
 import ArchivosDirectorio from './pages/ArchivosDirectorio'
@@ -33,6 +34,7 @@ import MiCredencial from './pages/MiCredencial'
 import Credenciales from './pages/Credenciales'
 import CredencialPublica from './pages/CredencialPublica'
 import Manual from './pages/Manual'
+import Nieve from './pages/Nieve'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -114,12 +116,14 @@ export default function App() {
           <Route path="/clases/config" element={<ClasesConfig />} />
           <Route path="/clases/reporte" element={<ReporteClases />} />
           <Route path="/clases/bitacora" element={<Bitacora />} />
+          <Route path="/clases/mi-bitacora" element={<MiBitacora />} />
           <Route path="/beneficios" element={<Beneficios />} />
           <Route path="/comunicaciones" element={<Comunicaciones />} />
           <Route path="/directorio/archivos" element={<ArchivosDirectorio />} />
           <Route path="/mi-credencial" element={<MiCredencial />} />
           <Route path="/credenciales" element={<Credenciales />} />
           <Route path="/manual" element={<Manual />} />
+          <Route path="/nieve" element={<Nieve />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
       </Layout>

@@ -25,6 +25,7 @@ const PATH_SECCION = {
   '/clases/config': 'clases_config',
   '/clases/reporte': 'clases_reporte',
   '/clases/bitacora': 'clases_bitacora',
+  '/clases/mi-bitacora': 'clases_bitacora',
   '/beneficios': 'beneficios',
   '/comunicaciones': 'comunicaciones',
   '/directorio/archivos': 'archivos_directorio',
@@ -51,6 +52,7 @@ const iniciales = (nombre) => {
 const NAV = [
   { section: 'Principal' },
   { path: '/dashboard', icon: 'ti-dashboard', label: 'Dashboard' },
+  { path: '/nieve', icon: 'ti-snowflake', label: 'Nieve' },
   { section: 'Gestión' },
   { path: '/socios', icon: 'ti-users', label: 'Socios' },
   { path: '/beneficiarios', icon: 'ti-heart', label: 'Beneficiarios' },
@@ -70,6 +72,7 @@ const NAV = [
   { path: '/clases/config', icon: 'ti-adjustments', label: 'Configuración clases' },
   { path: '/clases/reporte', icon: 'ti-report-money', label: 'Reporte mensual' },
   { path: '/clases/bitacora', icon: 'ti-notebook', label: 'Bitácora', ocultarSocio: true },
+  { path: '/clases/mi-bitacora', icon: 'ti-notebook', label: 'Feedback de clases', requiereSocio: true },
   { section: 'Comunicación' },
   { path: '/beneficios', icon: 'ti-gift', label: 'Beneficios' },
   { path: '/comunicaciones', icon: 'ti-speakerphone', label: 'Comunicaciones' },
@@ -109,12 +112,14 @@ const PAGE_TITLES = {
   '/clases/config': 'Clases de esquí — Configuración',
   '/clases/reporte': 'Clases de esquí — Reporte mensual',
   '/clases/bitacora': 'Clases de esquí — Bitácora',
+  '/clases/mi-bitacora': 'Feedback de clases',
   '/beneficios': 'Beneficios y Convenios',
   '/comunicaciones': 'Comunicaciones',
   '/directorio/archivos': 'Archivos Directorio',
   '/mi-credencial': 'Mi Credencial',
   '/credenciales': 'Credenciales de socios',
   '/manual': 'Manual',
+  '/nieve': 'Nieve · Volcán Osorno',
 }
 
 export default function Layout({ children }) {
