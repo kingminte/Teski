@@ -1,6 +1,330 @@
 // Pestaña informativa "Nieve" — cámaras en vivo del Volcán Osorno y pronóstico.
-// Puramente informativa: sin datos propios, sin Supabase. Solo iframes + CSS.
+// Puramente informativa: sin datos propios, sin Supabase. Solo iframes/fetch + CSS.
 // Visible para cualquier usuario logueado (no usa permisos_rol).
+
+import { useEffect, useState } from 'react'
+
+// ── Pronóstico: Open-Meteo (gratis, sin API key, CORS ok) ──────────────────
+const FORECAST_URL =
+  'https://api.open-meteo.com/v1/forecast' +
+  '?latitude=-41.12&longitude=-72.52&elevation=1230' +
+  '&daily=temperature_2m_max,temperature_2m_min,snowfall_sum,precipitation_sum,weather_code,wind_speed_10m_max,wind_direction_10m_dominant' +
+  '&hourly=temperature_2m,weather_code,wind_speed_10m,wind_direction_10m,snowfall,precipitation' +
+  '&timezone=America/Santiago&forecast_days=7'
+
+const SNOW_FORECAST_URL = 'https://www.snow-forecast.com/resorts/VolcanOsorno/6day/bot'
+const CACHE_KEY = 'teski_nieve_forecast'
+const CACHE_TTL = 60 * 60 * 1000 // 1 hora
+
+const AZUL = '#6db5f0'   // nieve / cm destacados
+const LLUVIA = '#7ea6d6' // íconos de lluvia
+
+const DIAS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
+const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic']
+// Palabra completa en español para el banner (8 puntos cardinales).
+const CARDINALES = ['norte', 'noreste', 'este', 'sureste', 'sur', 'suroeste', 'oeste', 'noroeste']
+
+const FRANJAS = [
+  { label: 'Mañana', hora: 9 },
+  { label: 'Mediodía', hora: 13 },
+  { label: 'Tarde', hora: 16 },
+]
+
+// Fecha local (NUNCA new Date('YYYY-MM-DD') — parsea UTC y corre el día).
+function parseLocalDate(ymd) {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+function dayLabel(ymd, index) {
+  if (index === 0) return 'Hoy'
+  return DIAS[parseLocalDate(ymd).getDay()]
+}
+function shortDate(ymd) {
+  const dt = parseLocalDate(ymd)
+  return `${dt.getDate()} ${MESES[dt.getMonth()]}`
+}
+function cardinalPalabra(grados) {
+  return CARDINALES[Math.round(grados / 45) % 8]
+}
+function horaCorta(ts) {
+  return new Date(ts).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+// Redondeo a 1 decimal como máximo, sin ceros colgando.
+function n1(v) {
+  return Math.round(v * 10) / 10
+}
+function windColor(v) {
+  if (v > 40) return 'var(--danger)'
+  if (v >= 20) return 'var(--warning)'
+  return 'var(--text-muted)'
+}
+function hourlyIndex(hourly, ymd, hora) {
+  return hourly.time.indexOf(`${ymd}T${String(hora).padStart(2, '0')}:00`)
+}
+
+// weather_code (WMO) → ícono Tabler + texto ES + color. Fallback: nublado.
+function weatherInfo(code) {
+  if (code === 0) return { icon: 'ti-sun', text: 'despejado', color: 'var(--gold-light)' }
+  if (code === 1 || code === 2) return { icon: 'ti-sun-low', text: 'parcial', color: 'var(--gold-light)' }
+  if (code === 3) return { icon: 'ti-cloud', text: 'nublado', color: 'var(--text-muted)' }
+  if (code === 45 || code === 48) return { icon: 'ti-cloud-fog', text: 'niebla', color: 'var(--text-muted)' }
+  if (code >= 51 && code <= 57) return { icon: 'ti-cloud-rain', text: 'llovizna', color: LLUVIA }
+  if (code >= 61 && code <= 67) return { icon: 'ti-cloud-rain', text: 'lluvia', color: LLUVIA }
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86) return { icon: 'ti-snowflake', text: 'nieve', color: AZUL }
+  if (code >= 80 && code <= 82) return { icon: 'ti-cloud-rain', text: 'chubascos', color: LLUVIA }
+  if (code >= 95 && code <= 99) return { icon: 'ti-cloud-storm', text: 'tormenta', color: LLUVIA }
+  return { icon: 'ti-cloud', text: 'nublado', color: 'var(--text-muted)' }
+}
+
+// fetch con cache en sessionStorage (< 1h reutiliza sin llamar de nuevo).
+async function fetchForecast() {
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY)
+    if (raw) {
+      const cached = JSON.parse(raw)
+      if (cached?.data && Date.now() - cached.ts < CACHE_TTL) {
+        return { data: cached.data, ts: cached.ts }
+      }
+    }
+  } catch { /* cache corrupto: ignorar y refrescar */ }
+
+  const res = await fetch(FORECAST_URL)
+  if (!res.ok) throw new Error(`Open-Meteo ${res.status}`)
+  const data = await res.json()
+  const ts = Date.now()
+  try {
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify({ ts, data }))
+  } catch { /* storage lleno/bloqueado: seguir sin cache */ }
+  return { data, ts }
+}
+
+function SnowForecastLink() {
+  return (
+    <a
+      href={SNOW_FORECAST_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ color: 'var(--gold)', fontSize: 12, textDecoration: 'underline', fontFamily: 'sans-serif' }}
+    >
+      Ver pronóstico completo en Snow-Forecast.com
+    </a>
+  )
+}
+
+function WindArrow({ deg }) {
+  // La flecha apunta hacia DONDE sopla (Open-Meteo entrega de dónde viene → +180).
+  return (
+    <i
+      className="ti ti-arrow-narrow-up"
+      style={{ display: 'inline-block', transform: `rotate(${deg + 180}deg)`, fontSize: 15, color: 'var(--text-muted)' }}
+    />
+  )
+}
+
+function bannerTexto(daily) {
+  // 1ª nevada de los 7 días.
+  const idxNieve = daily.snowfall_sum.findIndex(v => v > 0)
+  let texto = idxNieve >= 0
+    ? `Próxima nevada: ${dayLabel(daily.time[idxNieve], idxNieve)} (~${n1(daily.snowfall_sum[idxNieve])} cm).`
+    : 'Sin nieve pronosticada esta semana.'
+
+  // Viento fuerte en los próximos 3 días.
+  for (let i = 0; i < Math.min(3, daily.time.length); i++) {
+    if (daily.wind_speed_10m_max[i] > 40) {
+      const dia = dayLabel(daily.time[i], i)
+      const dir = cardinalPalabra(daily.wind_direction_10m_dominant[i])
+      const p = daily.precipitation_sum[i]
+      const precip = p > 20 ? 'lluvia fuerte' : p > 2 ? 'lluvia' : null
+      texto += precip
+        ? ` ${dia} con ${precip} y viento ${dir} sobre 40 km/h.`
+        : ` ${dia} con viento ${dir} sobre 40 km/h.`
+      break
+    }
+  }
+  return texto
+}
+
+// Resumen "min° / max° · nieve/lluvia" de un día del bloque daily.
+function ResumenDia({ daily, i, orden = 'minmax' }) {
+  const max = Math.round(daily.temperature_2m_max[i])
+  const min = Math.round(daily.temperature_2m_min[i])
+  const snow = daily.snowfall_sum[i]
+  const precip = daily.precipitation_sum[i]
+  const temps = orden === 'maxmin' ? `${max}° / ${min}°` : `${min}° / ${max}°`
+  return (
+    <span style={{ fontFamily: 'sans-serif', fontSize: 12, color: 'var(--text-muted)' }}>
+      {temps}
+      {snow > 0 ? (
+        <span style={{ color: AZUL, fontWeight: 600 }}> · {n1(snow)} cm</span>
+      ) : precip > 0 ? (
+        <span> · {n1(precip)} mm</span>
+      ) : null}
+    </span>
+  )
+}
+
+function DetalleDia({ daily, hourly, i }) {
+  const ymd = daily.time[i]
+  const hoy = i === 0
+  return (
+    <div style={{
+      border: `0.5px solid ${hoy ? 'var(--border-strong)' : 'var(--border)'}`,
+      borderRadius: 10,
+      background: hoy ? 'rgba(201,168,76,0.06)' : 'rgba(10,22,40,0.35)',
+      padding: '0.85rem 1rem',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span style={{ fontFamily: 'sans-serif', fontSize: 13, color: hoy ? 'var(--gold-light)' : '#c8d0dc', fontWeight: 600 }}>
+          {dayLabel(ymd, i)} · {shortDate(ymd)}
+        </span>
+        <ResumenDia daily={daily} i={i} orden="minmax" />
+      </div>
+      {FRANJAS.map(f => {
+        const idx = hourlyIndex(hourly, ymd, f.hora)
+        const wi = idx >= 0 ? weatherInfo(hourly.weather_code[idx]) : null
+        const ws = idx >= 0 ? Math.round(hourly.wind_speed_10m[idx]) : null
+        return (
+          <div key={f.label} style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'sans-serif', fontSize: 12, padding: '3px 0' }}>
+            <span style={{ width: 54, flexShrink: 0, color: 'var(--text-muted)' }}>{f.label}</span>
+            {idx >= 0 ? (
+              <>
+                <i className={`ti ${wi.icon}`} title={wi.text} style={{ fontSize: 16, width: 18, textAlign: 'center', flexShrink: 0, color: wi.color }} />
+                <span style={{ width: 34, flexShrink: 0, color: 'var(--text)' }}>{Math.round(hourly.temperature_2m[idx])}°</span>
+                <span style={{ flex: 1 }} />
+                <WindArrow deg={hourly.wind_direction_10m[idx]} />
+                <span style={{ width: 52, flexShrink: 0, textAlign: 'right', color: windColor(ws), fontWeight: ws > 40 ? 500 : 400 }}>{ws} km/h</span>
+              </>
+            ) : (
+              <span style={{ color: 'var(--text-dim)' }}>—</span>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function DiaCompacto({ daily, i }) {
+  const ymd = daily.time[i]
+  const wi = weatherInfo(daily.weather_code[i])
+  const snow = daily.snowfall_sum[i]
+  const precip = daily.precipitation_sum[i]
+  const wmax = Math.round(daily.wind_speed_10m_max[i])
+  return (
+    <div style={{
+      border: '0.5px solid var(--border)', borderRadius: 10, background: 'rgba(10,22,40,0.35)',
+      padding: '0.75rem', textAlign: 'center', fontFamily: 'sans-serif',
+    }}>
+      <div style={{ fontSize: 12, color: '#c8d0dc', fontWeight: 600, marginBottom: 4 }}>{dayLabel(ymd, i)}</div>
+      <i className={`ti ${wi.icon}`} title={wi.text} style={{ fontSize: 24, color: wi.color }} />
+      <div style={{ fontSize: 12, color: 'var(--text-muted)', margin: '4px 0' }}>
+        {Math.round(daily.temperature_2m_max[i])}° / {Math.round(daily.temperature_2m_min[i])}°
+      </div>
+      <div style={{ fontSize: 12, minHeight: 16 }}>
+        {snow > 0 ? (
+          <span style={{ color: AZUL, fontWeight: 600 }}>{n1(snow)} cm</span>
+        ) : precip > 0 ? (
+          <span style={{ color: 'var(--text-muted)' }}>{n1(precip)} mm</span>
+        ) : (
+          <span style={{ color: 'var(--text-dim)' }}>—</span>
+        )}
+      </div>
+      <div style={{ fontSize: 12, marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
+        <i className="ti ti-wind" style={{ fontSize: 14, color: 'var(--text-dim)' }} />
+        <span style={{ color: windColor(wmax), fontWeight: wmax > 40 ? 500 : 400 }}>{wmax} km/h</span>
+      </div>
+    </div>
+  )
+}
+
+function Pronostico() {
+  const [state, setState] = useState({ status: 'loading', data: null, ts: null })
+
+  useEffect(() => {
+    let alive = true
+    fetchForecast()
+      .then(({ data, ts }) => { if (alive) setState({ status: 'ready', data, ts }) })
+      .catch(() => { if (alive) setState({ status: 'error', data: null, ts: null }) })
+    return () => { alive = false }
+  }, [])
+
+  const daily = state.data?.daily
+  const hourly = state.data?.hourly
+  const listo = state.status === 'ready' && daily && hourly && Array.isArray(daily.time) && daily.time.length > 0
+
+  return (
+    <div className="card">
+      <div className="card-header">
+        <div className="card-title"><i className="ti ti-cloud-snow"></i> Pronóstico · base (1230 m)</div>
+        {listo && (
+          <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+            Actualizado {horaCorta(state.ts)}
+          </span>
+        )}
+      </div>
+      <div style={{ padding: '1.25rem 1.5rem' }}>
+        {state.status === 'loading' && (
+          <div style={{ color: 'var(--text-muted)', fontFamily: 'sans-serif', fontSize: 13, padding: '1rem 0' }}>
+            Cargando pronóstico…
+          </div>
+        )}
+
+        {state.status === 'error' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, color: 'var(--text-muted)', fontFamily: 'sans-serif', fontSize: 13, padding: '1rem 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <i className="ti ti-cloud-off" style={{ fontSize: 20, color: 'var(--text-dim)' }} />
+              Pronóstico no disponible
+            </div>
+            <SnowForecastLink />
+          </div>
+        )}
+
+        {listo && (
+          <>
+            {/* Banner resumen */}
+            <div style={{
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+              background: 'rgba(109,181,240,0.08)', border: '0.5px solid rgba(109,181,240,0.25)',
+              borderRadius: 8, padding: '0.75rem 1rem', marginBottom: '1.25rem',
+            }}>
+              <i className="ti ti-snowflake" style={{ fontSize: 20, color: AZUL, flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontFamily: 'sans-serif', fontSize: 13, color: '#d3dbe8', lineHeight: 1.5 }}>
+                {bannerTexto(daily)}
+              </span>
+            </div>
+
+            {/* Detalle 3 días (hoy + 2) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '0.85rem', marginBottom: '1.25rem' }}>
+              {[0, 1, 2].filter(i => i < daily.time.length).map(i => (
+                <DetalleDia key={daily.time[i]} daily={daily} hourly={hourly} i={i} />
+              ))}
+            </div>
+
+            {/* Resto de la semana (días 4 a 7) */}
+            {daily.time.length > 3 && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
+                {[3, 4, 5, 6].filter(i => i < daily.time.length).map(i => (
+                  <DiaCompacto key={daily.time[i]} daily={daily} i={i} />
+                ))}
+              </div>
+            )}
+
+            {/* Pie */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+              marginTop: '1.25rem', paddingTop: '0.85rem', borderTop: '0.5px solid var(--border)',
+            }}>
+              <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                Datos: Open-Meteo · Viento: <span style={{ color: 'var(--text-muted)' }}>gris &lt;20</span> · <span style={{ color: 'var(--warning)' }}>ámbar 20–40</span> · <span style={{ color: 'var(--danger)' }}>rojo &gt;40</span> km/h
+              </span>
+              <SnowForecastLink />
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
 
 const CAMARAS = [
   {
@@ -104,41 +428,8 @@ export default function Nieve() {
         </div>
       </div>
 
-      {/* Pronóstico — widget oficial de snow-forecast.com */}
-      <div className="card">
-        <div className="card-header">
-          <div className="card-title"><i className="ti ti-cloud-snow"></i> Pronóstico · snow-forecast.com</div>
-        </div>
-        <div style={{ padding: '1.25rem 1.5rem' }}>
-          <div id="weatherfeed">
-            <iframe
-              allowTransparency="true"
-              frameBorder="0"
-              height="100%"
-              marginHeight="0"
-              marginWidth="0"
-              scrolling="no"
-              src="https://www.snow-forecast.com/resorts/VolcanOsorno/forecasts/widget/mid/m"
-              style={{ overflow: 'hidden', border: 'none', width: '100%', minHeight: 350, height: '100%', display: 'block' }}
-              title="Weather forecast for Volcán Osorno"
-              width="100%"
-            >
-              <p>Your browser does not support iframes.</p>
-            </iframe>
-            {/* Link de vuelta obligatorio por la licencia gratuita del widget: no ocultar. */}
-            <a
-              href="https://www.snow-forecast.com/resorts/VolcanOsorno/6day/mid?utm_source=embeddable&utm_medium=widget&utm_campaign=VolcanOsorno"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <div style={{ fontSize: 14, textAlign: 'center', color: 'var(--text-muted)', padding: '8px 8px 0' }}>
-                View the full Volcán Osorno forecast at{' '}
-                <span style={{ textDecoration: 'underline' }}>Snow-Forecast.com</span>
-              </div>
-            </a>
-          </div>
-        </div>
-      </div>
+      {/* Pronóstico propio — datos de Open-Meteo */}
+      <Pronostico />
     </div>
   )
 }
