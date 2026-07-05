@@ -16,6 +16,7 @@ export default function Bitacora() {
 
   const [socios, setSocios] = useState([])
   const [beneficiarios, setBeneficiarios] = useState([])
+  const [bitacoraRows, setBitacoraRows] = useState([])   // resumen: 1 fila por entrada (para agrupar y contar)
   const [loadingBase, setLoadingBase] = useState(true)
 
   const [search, setSearch] = useState('')
@@ -32,13 +33,21 @@ export default function Bitacora() {
 
   const loadBase = async () => {
     setLoadingBase(true)
-    const [{ data: socs }, { data: benes }] = await Promise.all([
+    const [{ data: socs }, { data: benes }, { data: bit }] = await Promise.all([
       supabase.from('socios').select('id,nombre,apellido,numero_socio').order('apellido'),
       supabase.from('beneficiarios').select('id,nombre,apellido,socio_id').order('apellido'),
+      supabase.from('clases_bitacora').select('participante_tipo,participante_id,socio_id,fecha'),
     ])
     setSocios(socs || [])
     setBeneficiarios(benes || [])
+    setBitacoraRows(bit || [])
     setLoadingBase(false)
+  }
+
+  // Recarga solo el resumen (para refrescar conteos tras crear/borrar).
+  const loadResumen = async () => {
+    const { data } = await supabase.from('clases_bitacora').select('participante_tipo,participante_id,socio_id,fecha')
+    setBitacoraRows(data || [])
   }
 
   // Lista unificada de participantes. socio_id se resuelve AQUÍ, en el origen:
@@ -54,13 +63,61 @@ export default function Bitacora() {
     })),
   ], [socios, beneficiarios])
 
+  const sociosById = useMemo(() => Object.fromEntries(socios.map(s => [s.id, s])), [socios])
+  const partByKey = useMemo(() => {
+    const m = {}
+    participantes.forEach(p => { m[`${p.participante_tipo}:${p.participante_id}`] = p })
+    return m
+  }, [participantes])
+
+  // Resumen por alumno: conteo de entradas + última fecha.
+  const resumen = useMemo(() => {
+    const acc = {}
+    bitacoraRows.forEach(r => {
+      const k = `${r.participante_tipo}:${r.participante_id}`
+      if (!acc[k]) acc[k] = { count: 0, ultima: '' }
+      acc[k].count++
+      if (r.fecha > acc[k].ultima) acc[k].ultima = r.fecha
+    })
+    return acc
+  }, [bitacoraRows])
+
+  // Enriquecer un participante con su familia (socio padre) y su conteo.
+  const enrich = (p) => {
+    const soc = sociosById[p.socio_id]
+    const r = resumen[`${p.participante_tipo}:${p.participante_id}`]
+    return {
+      ...p,
+      socioNombre: soc ? `${soc.nombre} ${soc.apellido}` : '',
+      socioNumero: soc?.numero_socio || '',
+      count: r?.count || 0,
+      ultima: r?.ultima || '',
+    }
+  }
+
+  // Lista general por defecto: SOLO alumnos con al menos una entrada, ordenados por nombre.
+  const alumnosConFeedback = useMemo(() => (
+    Object.keys(resumen)
+      .map(k => partByKey[k])
+      .filter(Boolean)
+      .map(enrich)
+      .sort((a, b) => norm(a.nombre).localeCompare(norm(b.nombre)))
+  ), [resumen, partByKey, sociosById])
+
+  // Con búsqueda: filtra sobre TODOS los participantes (por nombre de alumno o del socio),
+  // así el operador puede además iniciar el primer feedback de alguien sin historial aún.
   const resultados = useMemo(() => {
     const q = norm(search).trim()
-    if (q.length < 2) return []
-    return participantes.filter(p => norm(p.nombre).includes(q)).slice(0, 30)
-  }, [search, participantes])
+    if (!q) return []
+    return participantes
+      .map(enrich)
+      .filter(p => norm(p.nombre).includes(q) || norm(p.socioNombre).includes(q))
+      .sort((a, b) => norm(a.nombre).localeCompare(norm(b.nombre)))
+      .slice(0, 50)
+  }, [search, participantes, resumen, sociosById])
 
-  const seleccionar = (p) => { setAlumnoSel(p); setSearch('') }
+  const buscando = search.trim().length > 0
+  const listaMostrada = buscando ? resultados : alumnosConFeedback
 
   useEffect(() => {
     if (!alumnoSel) { setHistorial([]); return }
@@ -97,7 +154,10 @@ export default function Bitacora() {
     if (error) { showToast('Error al borrar: ' + error.message, 'error'); return }
     showToast('Entrada borrada')
     loadHistorial(alumnoSel)
+    loadResumen()
   }
+
+  const onFeedbackGuardado = () => { loadHistorial(alumnoSel); loadResumen() }
 
   if (!editable) {
     return (
@@ -110,35 +170,59 @@ export default function Bitacora() {
     )
   }
 
+  const selKey = alumnoSel ? `${alumnoSel.participante_tipo}:${alumnoSel.participante_id}` : null
+
   return (
     <div style={{ maxWidth: 820, margin: '0 auto' }}>
       {ToastComponent}
 
-      {/* Buscador de alumno */}
+      {/* Lista general de alumnos con feedback + buscador que filtra */}
       <div className="card">
         <div className="card-header">
           <div className="card-title"><i className="ti ti-notebook"></i> Bitácora de feedback</div>
         </div>
-        <div style={{ padding: '0.75rem 1.5rem 1.25rem' }}>
+        <div style={{ padding: '0.75rem 1.5rem 1rem' }}>
           <div className="search-box">
             <i className="ti ti-search"></i>
-            <input placeholder="Buscar alumno por nombre (socio o beneficiario)…"
+            <input placeholder="Filtrar por alumno o socio…"
               value={search} onChange={e => setSearch(e.target.value)} disabled={loadingBase} />
           </div>
-          {search.trim().length >= 2 && (
-            <div style={{ marginTop: 8, border: '0.5px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-              {resultados.length === 0 ? (
-                <div style={{ padding: '12px', fontSize: 13, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>Sin resultados</div>
-              ) : resultados.map(p => (
-                <div key={`${p.participante_tipo}:${p.participante_id}`} onClick={() => seleccionar(p)}
-                  style={{ padding: '10px 12px', borderBottom: '0.5px solid rgba(201,168,76,0.08)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 13, color: '#c8d0dc' }}>{p.nombre}</span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>{p.sub}</span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
+
+        {loadingBase ? (
+          <div className="empty-state"><i className="ti ti-loader"></i>Cargando…</div>
+        ) : listaMostrada.length === 0 ? (
+          <div className="empty-state">
+            <i className="ti ti-notebook-off"></i>
+            {buscando ? 'Sin resultados.' : 'Aún no hay feedback registrado en el sistema.'}
+          </div>
+        ) : (
+          <div style={{ padding: '0 0 0.5rem' }}>
+            {listaMostrada.map(p => {
+              const k = `${p.participante_tipo}:${p.participante_id}`
+              const familiaTxt = p.participante_tipo === 'beneficiario' && p.socioNombre
+                ? ` · Familia: ${p.socioNombre}${p.socioNumero ? ` (N°${p.socioNumero})` : ''}`
+                : ''
+              return (
+                <div key={k} onClick={() => setAlumnoSel(p)}
+                  style={{ padding: '10px 1.5rem', borderBottom: '0.5px solid rgba(201,168,76,0.08)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, background: selKey === k ? 'rgba(201,168,76,0.08)' : 'transparent' }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13.5, color: '#c8d0dc', display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <i className={`ti ${p.participante_tipo === 'beneficiario' ? 'ti-baby-carriage' : 'ti-user'}`} style={{ fontSize: 13, color: 'var(--text-muted)' }}></i>
+                      {p.nombre}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif', marginTop: 2 }}>{p.sub}{familiaTxt}</div>
+                  </div>
+                  <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 600, padding: '3px 9px', borderRadius: 5, fontFamily: 'sans-serif',
+                    background: p.count > 0 ? 'rgba(201,168,76,0.15)' : 'rgba(127,140,158,0.12)',
+                    color: p.count > 0 ? 'var(--gold-light)' : 'var(--text-dim)' }}>
+                    {p.count > 0 ? `${p.count} feedback` : 'sin feedback aún'}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        )}
       </div>
 
       {/* Alumno seleccionado + historial */}
@@ -200,7 +284,7 @@ export default function Bitacora() {
           alumno={alumnoSel} fecha={hoyISO()} grupoId={null}
           showToast={showToast}
           onClose={() => setCreando(false)}
-          onSaved={() => loadHistorial(alumnoSel)}
+          onSaved={onFeedbackGuardado}
         />
       )}
       {/* Modal editar */}
@@ -209,7 +293,7 @@ export default function Bitacora() {
           alumno={alumnoSel} entrada={editEntrada}
           showToast={showToast}
           onClose={() => setEditEntrada(null)}
-          onSaved={() => loadHistorial(alumnoSel)}
+          onSaved={onFeedbackGuardado}
         />
       )}
     </div>
