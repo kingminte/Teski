@@ -2,7 +2,7 @@
 // Puramente informativa: sin datos propios, sin Supabase. Solo iframes/fetch + CSS.
 // Visible para cualquier usuario logueado (no usa permisos_rol).
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 // ── Pronóstico: Open-Meteo (gratis, sin API key, CORS ok) ──────────────────
 const FORECAST_URL =
@@ -326,63 +326,106 @@ function Pronostico() {
   )
 }
 
+// El Centro Volcán Osorno emite por YouTube Live. Los IDs pueden CADUCAR si el
+// centro corta y reinicia la transmisión: cuando eso pase, el player reporta
+// onError y mostramos el aviso propio. Recuperar el ID es MANUAL (editar aquí).
 const CAMARAS = [
-  {
-    alias: 'boleteriasvo',
-    label: 'Boleterías (base)',
-    src: 'https://g3.ipcamlive.com/player/player.php?alias=boleteriasvo&autoplay=1',
-  },
-  {
-    alias: 'volcanosornocono',
-    label: 'Cono del volcán',
-    src: 'https://g3.ipcamlive.com/player/player.php?alias=volcanosornocono&autoplay=1',
-  },
+  { key: 'boleterias', label: 'Boleterías (base)', corto: 'Boletería', videoId: 'BhJ-RasFPTM' },
+  { key: 'cono', label: 'Cono del volcán', corto: 'Cono', videoId: '2uBn7TRSYjI' },
 ]
 
-function CamaraCard({ label, src }) {
+// Carga la YouTube IFrame Player API UNA sola vez (script global compartido).
+let ytApiPromise = null
+function loadYouTubeAPI() {
+  if (typeof window === 'undefined') return Promise.resolve(null)
+  if (window.YT && window.YT.Player) return Promise.resolve(window.YT)
+  if (ytApiPromise) return ytApiPromise
+  ytApiPromise = new Promise((resolve) => {
+    const prev = window.onYouTubeIframeAPIReady
+    window.onYouTubeIframeAPIReady = () => { if (typeof prev === 'function') prev(); resolve(window.YT) }
+    const tag = document.createElement('script')
+    tag.src = 'https://www.youtube.com/iframe_api'
+    document.head.appendChild(tag)
+  })
+  return ytApiPromise
+}
+
+function CamaraCard({ label, corto, videoId }) {
+  const holderRef = useRef(null)      // div que YT reemplaza por su iframe
+  const playerRef = useRef(null)
+  const [estado, setEstado] = useState('cargando')   // cargando | ok | error
+
+  useEffect(() => {
+    let cancelado = false
+    setEstado('cargando')
+    loadYouTubeAPI().then((YT) => {
+      if (cancelado || !YT || !holderRef.current) return
+      playerRef.current = new YT.Player(holderRef.current, {
+        videoId,
+        playerVars: { autoplay: 1, mute: 1, playsinline: 1, rel: 0 },
+        events: {
+          // mute + play explícitos: refuerzan el autoplay silenciado.
+          onReady: (e) => { try { e.target.mute(); e.target.playVideo() } catch { /* noop */ } },
+          onStateChange: (e) => {
+            if (e.data === YT.PlayerState.PLAYING || e.data === YT.PlayerState.BUFFERING) setEstado('ok')
+          },
+          // ID caducado / video no disponible / embed bloqueado → aviso propio.
+          onError: () => setEstado('error'),
+        },
+      })
+    })
+    return () => {
+      cancelado = true
+      try { playerRef.current?.destroy?.() } catch { /* noop */ }
+      playerRef.current = null
+    }
+  }, [videoId])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {/* Marco 16:9. La capa de fallback queda debajo del iframe: si el
-          iframe no carga, el mensaje asoma por detrás. */}
+      {/* Marco 16:9. El player de YT vive en el holder; si falla, superponemos
+          el aviso propio SOLO sobre esta cámara (la otra sigue andando). */}
       <div style={{
         position: 'relative', aspectRatio: '16 / 9', width: '100%',
         background: 'var(--navy)', border: '0.5px solid var(--border)',
         borderRadius: 10, overflow: 'hidden',
       }}>
-        <div style={{
-          position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
-          alignItems: 'center', justifyContent: 'center', gap: 8, padding: '1rem',
-          textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'sans-serif', fontSize: 13,
-        }}>
-          <i className="ti ti-video-off" style={{ fontSize: 28, color: 'var(--text-dim)' }}></i>
-          <div>Cámara no disponible</div>
-          <a
-            href="https://centrovolcanosorno.cl/live-cam/"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: 'var(--gold)', fontSize: 12, textDecoration: 'underline' }}
-          >
-            Ver cámaras en el sitio del centro
-          </a>
+        {/* Contenedor del player (YT reemplaza el div interno por su iframe) */}
+        <div style={{ position: 'absolute', inset: 0 }}>
+          <div ref={holderRef} style={{ width: '100%', height: '100%' }} />
         </div>
-        <iframe
-          title={label}
-          src={src}
-          loading="lazy"
-          allow="autoplay; fullscreen"
-          allowFullScreen
-          style={{
-            position: 'absolute', inset: 0, width: '100%', height: '100%',
-            border: 'none', display: 'block',
-          }}
-        />
+
+        {/* Aviso propio de cámara no disponible (por cámara) */}
+        {estado === 'error' && (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: 8, padding: '1rem',
+            textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'sans-serif', fontSize: 13,
+            background: 'var(--navy)',
+          }}>
+            <i className="ti ti-video-off" style={{ fontSize: 28, color: 'var(--text-dim)' }}></i>
+            <div>La transmisión de la cámara {corto} no está disponible en este momento.</div>
+            <a
+              href="https://centrovolcanosorno.cl/live-cam/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'var(--gold)', fontSize: 12, textDecoration: 'underline' }}
+            >
+              Ver en el sitio del centro
+            </a>
+          </div>
+        )}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'sans-serif' }}>
-        <span style={{
-          width: 8, height: 8, borderRadius: '50%', background: 'var(--danger)',
-          boxShadow: '0 0 0 3px rgba(226,75,74,0.2)', flexShrink: 0,
-        }} />
-        <span style={{ fontSize: 11, color: 'var(--danger)', letterSpacing: 1, textTransform: 'uppercase' }}>Live</span>
+        {estado !== 'error' && (
+          <>
+            <span style={{
+              width: 8, height: 8, borderRadius: '50%', background: 'var(--danger)',
+              boxShadow: '0 0 0 3px rgba(226,75,74,0.2)', flexShrink: 0,
+            }} />
+            <span style={{ fontSize: 11, color: 'var(--danger)', letterSpacing: 1, textTransform: 'uppercase' }}>Live</span>
+          </>
+        )}
         <span style={{ fontSize: 13, color: '#c8d0dc' }}>{label}</span>
       </div>
     </div>
@@ -422,7 +465,7 @@ export default function Nieve() {
             gap: '1.25rem',
           }}>
             {CAMARAS.map(cam => (
-              <CamaraCard key={cam.alias} label={cam.label} src={cam.src} />
+              <CamaraCard key={cam.key} label={cam.label} corto={cam.corto} videoId={cam.videoId} />
             ))}
           </div>
         </div>
