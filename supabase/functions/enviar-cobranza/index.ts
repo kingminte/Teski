@@ -9,6 +9,15 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts"
 
+// CORS: el navegador dispara un preflight OPTIONS antes del POST (por los
+// headers authorization/content-type que manda supabase.functions.invoke).
+// Sin estos headers + manejo de OPTIONS, el browser bloquea la llamada.
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+
 interface Payload {
   destinatario: string
   asunto: string
@@ -17,10 +26,15 @@ interface Payload {
 }
 
 Deno.serve(async (req: Request) => {
+  // Preflight CORS: responder de inmediato, antes de cualquier otra lógica.
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders })
+  }
+
   if (req.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Método no permitido' }), {
       status: 405,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }
 
@@ -30,7 +44,7 @@ Deno.serve(async (req: Request) => {
   } catch {
     return new Response(JSON.stringify({ error: 'JSON inválido' }), {
       status: 400,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   }
 
@@ -38,7 +52,7 @@ Deno.serve(async (req: Request) => {
   if (!destinatario || !asunto || !html) {
     return new Response(
       JSON.stringify({ error: 'destinatario, asunto y html son obligatorios' }),
-      { status: 400, headers: { 'Content-Type': 'application/json' } },
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
   }
 
@@ -51,7 +65,7 @@ Deno.serve(async (req: Request) => {
         error: 'RESEND_API_KEY no configurada en secrets',
         hint: 'supabase secrets set RESEND_API_KEY=re_xxx',
       }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } },
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
   }
 
@@ -75,12 +89,12 @@ Deno.serve(async (req: Request) => {
   if (!res.ok) {
     return new Response(
       JSON.stringify({ error: 'Resend rechazó el envío', detalle: data }),
-      { status: res.status, headers: { 'Content-Type': 'application/json' } },
+      { status: res.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     )
   }
 
   return new Response(JSON.stringify({ ok: true, id: data.id }), {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   })
 })
