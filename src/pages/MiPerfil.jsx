@@ -5,9 +5,25 @@ import { useAuth } from '../lib/useAuth'
 
 const emailValido = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e || '').trim())
 
-// Perfil del socio: edita SU email de contacto y SU preferencia de avisos de la
-// Escuela. Todo acotado por el socio_id del usuario logueado (no puede tocar
-// el perfil de otro socio: la query filtra por su propio id).
+// Interruptor reutilizable: SOLO el toggle (el estado lo comunica el propio
+// icono; sin texto redundante junto al switch).
+function Switch({ on, disabled, onToggle }) {
+  return (
+    <button onClick={() => !disabled && onToggle()} disabled={disabled}
+      title={disabled ? 'Requiere el interruptor general' : (on ? 'Desactivar' : 'Activar')}
+      style={{
+        flexShrink: 0, background: 'none', border: 'none', padding: 0,
+        cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
+        color: on ? '#5dcaa5' : 'var(--text-dim)', display: 'inline-flex', alignItems: 'center',
+      }}>
+      <i className={`ti ${on ? 'ti-toggle-right' : 'ti-toggle-left'}`} style={{ fontSize: 30 }}></i>
+    </button>
+  )
+}
+
+// Perfil del socio: edita SU email de contacto y SUS preferencias granulares de
+// avisos de la Escuela (jsonb { general, dia_abierto, horario }). Todo acotado al
+// socio_id del usuario logueado (la query filtra por su propio id).
 export default function MiPerfil() {
   const { user } = useAuth()
   const { showToast, ToastComponent } = useToast()
@@ -15,19 +31,23 @@ export default function MiPerfil() {
 
   const [socio, setSocio] = useState(null)
   const [emailDraft, setEmailDraft] = useState('')
+  const [prefs, setPrefs] = useState({ general: true, dia_abierto: true, horario: true })
   const [loading, setLoading] = useState(true)
   const [savingEmail, setSavingEmail] = useState(false)
-  const [savingAviso, setSavingAviso] = useState(false)
+  const [savingPref, setSavingPref] = useState(false)
 
   useEffect(() => { if (miSocioId) load() }, [miSocioId])
 
   const load = async () => {
     setLoading(true)
     const { data } = await supabase.from('socios')
-      .select('email, recibe_avisos_escuela, nombre, apellido')
+      .select('email, preferencias_avisos, nombre, apellido')
       .eq('id', miSocioId).maybeSingle()
     setSocio(data || null)
     setEmailDraft(data?.email || '')
+    // Claves ausentes → true por robustez.
+    const p = data?.preferencias_avisos || {}
+    setPrefs({ general: p.general ?? true, dia_abierto: p.dia_abierto ?? true, horario: p.horario ?? true })
     setLoading(false)
   }
 
@@ -42,14 +62,25 @@ export default function MiPerfil() {
     showToast('Correo actualizado')
   }
 
-  const toggleAviso = async () => {
-    const nuevo = !socio.recibe_avisos_escuela
-    setSavingAviso(true)
-    const { error } = await supabase.from('socios').update({ recibe_avisos_escuela: nuevo }).eq('id', miSocioId)
-    setSavingAviso(false)
-    if (error) { showToast('Error al guardar la preferencia: ' + error.message, 'error'); return }
-    setSocio(s => ({ ...s, recibe_avisos_escuela: nuevo }))
-    showToast(nuevo ? 'Recibirás avisos de la Escuela' : 'Ya no recibirás avisos de la Escuela')
+  // Persiste el jsonb COMPLETO (nunca pisa los específicos al tocar el general).
+  const savePrefs = async (next) => {
+    setSavingPref(true)
+    const { error } = await supabase.from('socios').update({ preferencias_avisos: next }).eq('id', miSocioId)
+    setSavingPref(false)
+    if (error) { showToast('Error al guardar la preferencia: ' + error.message, 'error'); return false }
+    setPrefs(next)
+    return true
+  }
+
+  const toggleGeneral = async () => {
+    const next = { ...prefs, general: !prefs.general }   // específicos se conservan
+    const ok = await savePrefs(next)
+    if (ok) showToast(next.general ? 'Recibirás avisos de la Escuela' : 'Avisos de la Escuela desactivados')
+  }
+  const toggleEspecifico = async (key) => {
+    if (!prefs.general) return   // deshabilitados mientras el general esté apagado
+    const ok = await savePrefs({ ...prefs, [key]: !prefs[key] })
+    if (ok) showToast('Preferencia actualizada')
   }
 
   if (!miSocioId) {
@@ -67,7 +98,9 @@ export default function MiPerfil() {
     return <div className="card"><div className="empty-state"><i className="ti ti-alert-triangle"></i>No se encontró tu socio.</div></div>
   }
 
-  const activo = !!socio.recibe_avisos_escuela
+  const rowStyle = { padding: '1rem 1.5rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }
+  const labelStyle = { fontSize: 14, color: '#c8d0dc' }
+  const helpStyle = { fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif', marginTop: 4, lineHeight: 1.5 }
 
   return (
     <div style={{ maxWidth: 560, margin: '0 auto' }}>
@@ -80,7 +113,7 @@ export default function MiPerfil() {
         </div>
       </div>
 
-      {/* Correo de contacto */}
+      {/* Correo de contacto (sin cambios) */}
       <div className="card">
         <div className="card-header">
           <div className="card-title"><i className="ti ti-mail"></i> Correo de contacto</div>
@@ -100,26 +133,40 @@ export default function MiPerfil() {
         </div>
       </div>
 
-      {/* Preferencia de avisos de la Escuela */}
+      {/* Preferencias granulares de avisos de la Escuela */}
       <div className="card">
         <div className="card-header">
           <div className="card-title"><i className="ti ti-ski-jumping"></i> Avisos de la Escuela de esquí</div>
         </div>
-        <div style={{ padding: '1rem 1.5rem', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
+
+        {/* Maestro: cabecera destacada */}
+        <div style={{ ...rowStyle, background: 'rgba(201,168,76,0.07)' }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 14, color: '#c8d0dc' }}>Recibir avisos por email de la Escuela de esquí</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif', marginTop: 4, lineHeight: 1.5 }}>
-              Inscripciones abiertas, horarios de clases y novedades de la Escuela. Si lo desactivas, no recibirás estos correos.
-            </div>
+            <div style={{ ...labelStyle, fontWeight: 600, color: 'var(--gold-light)' }}>Avisos de la Escuela de esquí</div>
+            <div style={helpStyle}>Interruptor general — gobierna los de abajo.</div>
           </div>
-          <button onClick={toggleAviso} disabled={savingAviso} title={activo ? 'Desactivar' : 'Activar'}
-            style={{
-              flexShrink: 0, background: 'none', border: 'none', cursor: savingAviso ? 'default' : 'pointer',
-              color: activo ? '#5dcaa5' : 'var(--text-dim)', display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: 'sans-serif', fontSize: 13,
-            }}>
-            <i className={`ti ${activo ? 'ti-toggle-right' : 'ti-toggle-left'}`} style={{ fontSize: 28 }}></i>
-            {activo ? 'Activado' : 'Desactivado'}
-          </button>
+          <Switch on={prefs.general} disabled={savingPref} onToggle={toggleGeneral} />
+        </div>
+
+        {/* Específicos: indentados, colgando del general con una línea vertical */}
+        <div style={{ marginLeft: 16, borderLeft: '2px solid rgba(201,168,76,0.25)' }}>
+          <div style={{ ...rowStyle, paddingLeft: 40 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={labelStyle}>Fechas nuevas de clases</div>
+              <div style={helpStyle}>Cuando se abre inscripción para una fecha.</div>
+            </div>
+            <Switch on={prefs.dia_abierto} disabled={savingPref || !prefs.general} onToggle={() => toggleEspecifico('dia_abierto')} />
+          </div>
+
+          <div style={{ borderTop: '0.5px solid rgba(201,168,76,0.08)' }} />
+
+          <div style={{ ...rowStyle, paddingLeft: 40 }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={labelStyle}>Horario de mis clases</div>
+              <div style={helpStyle}>Confirmación de hora de las clases que pedí.</div>
+            </div>
+            <Switch on={prefs.horario} disabled={savingPref || !prefs.general} onToggle={() => toggleEspecifico('horario')} />
+          </div>
         </div>
       </div>
     </div>
