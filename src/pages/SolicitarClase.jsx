@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
 import { useAuth } from '../lib/useAuth'
+import { dispatchAviso } from '../lib/comunicaciones'
 
 const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
 const hoyISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
@@ -191,6 +192,24 @@ export default function SolicitarClase() {
     showToast('Solicitud enviada. Andacor te confirmará el horario.')
     setShowModal(false)
     loadAll()
+
+    // Aviso al operador (best-effort): la inscripción YA se guardó y el socio ya
+    // vio su toast; un fallo de email NO debe romper ni revertir nada.
+    try {
+      const { data: cfg } = await supabase.from('config_club')
+        .select('valor').eq('clave', 'clases_operador_email').maybeSingle()
+      const variables = {
+        socio: `${socio.nombre} ${socio.apellido}`,
+        participantes: seleccionados.map(p => p.nombre).join(', '),
+        tipo: tipoSel === 'snowboard' ? 'snowboard' : 'esquí',
+        fecha: fechaSel.split('-').reverse().join('/'),
+      }
+      await dispatchAviso(
+        'clases_inscripcion',
+        [{ email: cfg?.valor || '', socio_id: null, variables }],
+        { socio_id: miSocioId, fecha: fechaSel, tipo: tipoSel },
+      )
+    } catch { /* aviso secundario: nunca romper la inscripción */ }
   }
 
   const puedeCancelar = (sol) => {
