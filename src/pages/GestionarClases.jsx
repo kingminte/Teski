@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
 import { useAuth } from '../lib/useAuth'
 import BitacoraFormModal from '../components/BitacoraFormModal'
+import { dispatchAviso } from '../lib/comunicaciones'
 
 const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
 const hoyISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
@@ -195,6 +196,64 @@ export default function GestionarClases() {
     return `El profesor ${nombre} ya tiene una clase de ${tipoLabel} de ${hhmm(g.hora_inicio)}–${hhmm(g.hora_fin)} en esta fecha. Cambia el horario o el profesor.`
   }
 
+  // Aviso de horario (best-effort): relee el grupo y su roster FRESCOS de la BD
+  // (el estado local queda stale tras el update), agrupa por socio_id → UN correo
+  // por socio con todos sus participantes, resuelve emails y llama a dispatchAviso.
+  // Nunca lanza: un fallo de correo no debe afectar la asignación/reprogramación.
+  // soloSocioId: si viene, avisa SOLO a ese socio (agrupar/mover → solo el afectado);
+  // si es null, avisa a todo el roster (reprogramar → el cambio de hora afecta a todos).
+  const enviarAvisoHorario = async (grupoId, soloSocioId = null) => {
+    try {
+      const { data: g } = await supabase.from('clases_grupos')
+        .select('*, clases_profesores(nombre)').eq('id', grupoId).maybeSingle()
+      if (!g) return
+      const { data: roster } = await supabase.from('clases_solicitudes')
+        .select('socio_id, participante_tipo, participante_id')
+        .eq('grupo_id', grupoId).neq('estado', 'cancelada')
+      if (!roster || roster.length === 0) return
+
+      // Nombres de participantes (socio → socios; beneficiario → beneficiarios)
+      // y datos+email de cada socio dueño de familia.
+      const socioPartIds = roster.filter(r => r.participante_tipo === 'socio').map(r => r.participante_id)
+      const beneIds = roster.filter(r => r.participante_tipo === 'beneficiario').map(r => r.participante_id)
+      const socioIds = [...new Set(roster.map(r => r.socio_id))]
+      const nombreMap = {}, socioById = {}
+      const { data: socs } = await supabase.from('socios').select('id,nombre,apellido,email')
+        .in('id', [...new Set([...socioIds, ...socioPartIds])])
+      ;(socs || []).forEach(s => { socioById[s.id] = s; nombreMap[s.id] = `${s.nombre} ${s.apellido}` })
+      if (beneIds.length) {
+        const { data: bs } = await supabase.from('beneficiarios').select('id,nombre,apellido').in('id', beneIds)
+        ;(bs || []).forEach(b => { nombreMap[b.id] = `${b.nombre} ${b.apellido}` })
+      }
+
+      // Agrupar por socio_id → 1 destinatario por socio con sus participantes juntos.
+      const porSocio = {}
+      for (const r of roster) {
+        (porSocio[r.socio_id] ||= []).push(nombreMap[r.participante_id] || 'Participante')
+      }
+      const profesorTxt = g.clases_profesores?.nombre ? ` con el profesor ${g.clases_profesores.nombre}` : ''
+      const destinatarios = Object.entries(porSocio)
+        .filter(([socioId]) => !soloSocioId || socioId === soloSocioId)
+        .map(([socioId, nombres]) => {
+        const soc = socioById[socioId]
+        return {
+          email: soc?.email || '',
+          socio_id: socioId,
+          variables: {
+            nombre: soc ? `${soc.nombre} ${soc.apellido}` : '',
+            participantes: nombres.join(', '),
+            fecha: (g.fecha || '').split('-').reverse().join('/'),
+            hora_inicio: hhmm(g.hora_inicio),
+            hora_fin: hhmm(g.hora_fin),
+            profesor: profesorTxt,
+            tipo: g.tipo === 'snowboard' ? 'snowboard' : 'esquí',
+          },
+        }
+      })
+      await dispatchAviso('clases_horario', destinatarios, { grupo_id: grupoId, fecha: g.fecha })
+    } catch { /* aviso secundario: nunca romper la operación */ }
+  }
+
   const handleConfirmarAgrupar = async () => {
     const sol = agruparSol
     const moviendo = !!sol.grupo_id
@@ -218,6 +277,7 @@ export default function GestionarClases() {
       showToast(moviendo ? 'Alumno movido' : 'Solicitud agendada')
       setAgruparSol(null)
       loadFecha(fechaSel)
+      enviarAvisoHorario(grupoId, sol.socio_id)   // solo el socio recién agregado/movido (best-effort)
     } catch (e) {
       showToast('Error al ' + (moviendo ? 'mover' : 'agrupar') + ': ' + e.message, 'error')
     }
@@ -239,7 +299,11 @@ export default function GestionarClases() {
     }).eq('id', editGrupo.id)
     setGuardandoEdit(false)
     if (error) showToast('Error al guardar: ' + error.message, 'error')
-    else { showToast('Grupo actualizado'); setEditGrupo(null); loadFecha(fechaSel) }
+    else {
+      const gid = editGrupo.id
+      showToast('Grupo actualizado'); setEditGrupo(null); loadFecha(fechaSel)
+      enviarAvisoHorario(gid)   // reprogramación: reavisar a los socios del grupo (best-effort)
+    }
   }
   const handleEliminarGrupo = async (g) => {
     if (!confirm('¿Eliminar este grupo? Las solicitudes vuelven a "pendiente" para reagrupar.')) return
