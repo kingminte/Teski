@@ -35,6 +35,7 @@ import Credenciales from './pages/Credenciales'
 import CredencialPublica from './pages/CredencialPublica'
 import Manual from './pages/Manual'
 import Nieve from './pages/Nieve'
+import Avisos from './pages/Avisos'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -109,6 +110,7 @@ export default function App() {
           <Route path="/bancos" element={<Bancos />} />
           <Route path="/reporteria" element={<Reporteria />} />
           <Route path="/reporte-financiero" element={<ReporteFinanciero />} />
+          <Route path="/avisos" element={<Avisos />} />
           <Route path="/usuarios" element={<Usuarios />} />
           <Route path="/clases/solicitar" element={<SolicitarClase />} />
           <Route path="/clases/gestion" element={<GestionarClases />} />

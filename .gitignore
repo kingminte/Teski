@@ -6,3 +6,4 @@ dist
 .claude/
 .vercel
 .env*
+supabase/.temp/
