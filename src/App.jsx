@@ -36,6 +36,7 @@ import CredencialPublica from './pages/CredencialPublica'
 import Manual from './pages/Manual'
 import Nieve from './pages/Nieve'
 import Avisos from './pages/Avisos'
+import MiPerfil from './pages/MiPerfil'
 
 export default function App() {
   const [user, setUser] = useState(loadUserFromStorage)
@@ -122,6 +123,7 @@ export default function App() {
           <Route path="/beneficios" element={<Beneficios />} />
           <Route path="/comunicaciones" element={<Comunicaciones />} />
           <Route path="/directorio/archivos" element={<ArchivosDirectorio />} />
+          <Route path="/mi-perfil" element={<MiPerfil />} />
           <Route path="/mi-credencial" element={<MiCredencial />} />
           <Route path="/credenciales" element={<Credenciales />} />
           <Route path="/manual" element={<Manual />} />
