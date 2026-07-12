@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
 import { useAuth } from '../lib/useAuth'
+import { resolverDestinatariosEscuela, dispatchAviso } from '../lib/comunicaciones'
 
 const TABS = [
   { id: 'profesores', icon: 'ti-school', label: 'Profesores' },
@@ -118,6 +119,11 @@ export default function ClasesCatalogos() {
   const openEditFec = (f) => { setFormFec({ fecha: f.fecha, notas: f.notas || '' }); setEditFecId(f.id); setShowModalFec(true) }
   const handleSaveFec = async () => {
     if (!formFec.fecha) { showToast('La fecha es obligatoria', 'error'); return }
+    // Capturar antes de cualquier cambio de estado: el aviso solo se dispara al
+    // CREAR una fecha nueva (insert), nunca al editar (evita spamear a los socios).
+    const esNueva = !editFecId
+    const fechaPub = formFec.fecha
+    const notasPub = formFec.notas || ''
     setSavingFec(true)
     let error
     if (editFecId) {
@@ -129,7 +135,27 @@ export default function ClasesCatalogos() {
     if (error) {
       const dup = error.code === '23505' || error.message?.includes('unique')
       showToast(dup ? 'Ya existe una fecha de disponibilidad para ese día' : 'Error al guardar: ' + error.message, 'error')
-    } else { showToast(editFecId ? 'Fecha actualizada' : 'Fecha agregada'); setShowModalFec(false); loadFechas() }
+    } else {
+      showToast(editFecId ? 'Fecha actualizada' : 'Fecha agregada')
+      setShowModalFec(false)
+      loadFechas()
+
+      // Aviso de día abierto (best-effort, SOLO al crear una fecha nueva): la
+      // fecha ya se guardó y mostró su toast; un fallo de correo no revierte nada.
+      // dispatchAviso ya hace throttle, respeta el switch on/off y registra.
+      if (esNueva) {
+        try {
+          const socios = await resolverDestinatariosEscuela()
+          const fechaFmt = fechaPub.split('-').reverse().join('/')
+          const destinatarios = socios.map(d => ({
+            email: d.email,
+            socio_id: d.socio_id,
+            variables: { nombre: d.nombre, fecha: fechaFmt, notas: notasPub },
+          }))
+          await dispatchAviso('clases_dia_abierto', destinatarios, { fecha: fechaPub })
+        } catch { /* aviso secundario: nunca romper la publicación de la fecha */ }
+      }
+    }
   }
   const handleDeleteFec = async (id) => {
     if (!confirm('¿Eliminar esta fecha de disponibilidad?')) return
