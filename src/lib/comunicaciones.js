@@ -30,6 +30,33 @@ async function registrarEnvio(row) {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
+// Estados de socio configurados para recibir avisos de la Escuela
+// (config_club.avisos_escuela_estados, lista separada por coma).
+export async function estadosAvisosEscuela() {
+  const { data } = await supabase.from('config_club')
+    .select('valor').eq('clave', 'avisos_escuela_estados').maybeSingle()
+  return (data?.valor || '').split(',').map(s => s.trim()).filter(Boolean)
+}
+
+// Socios que deben recibir un aviso MASIVO de la Escuela, aplicando la
+// intersección de DOS filtros:
+//   1) estado del socio ∈ estados configurados (config_club.avisos_escuela_estados)
+//   2) socios.recibe_avisos_escuela = true (consentimiento individual)
+// Devuelve [{ email, socio_id, nombre }] para que el caller arme las variables.
+export async function resolverDestinatariosEscuela() {
+  const estados = await estadosAvisosEscuela()
+  if (estados.length === 0) return []
+  const { data } = await supabase.from('socios')
+    .select('id, nombre, apellido, email')
+    .in('estado', estados)
+    .eq('recibe_avisos_escuela', true)
+  return (data || []).map(s => ({
+    email: s.email || '',
+    socio_id: s.id,
+    nombre: `${s.nombre} ${s.apellido}`,
+  }))
+}
+
 // Corazón del motor. Dado un aviso (clave de plantilla) y una lista de
 // destinatarios [{ email, socio_id, variables }], resuelve la plantilla,
 // renderiza, envía y registra cada envío.

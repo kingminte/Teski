@@ -33,6 +33,12 @@ const ejemploVars = (variablesStr) => {
 }
 
 const OPERADOR_KEY = 'clases_operador_email'
+const ESTADOS_KEY = 'avisos_escuela_estados'
+const ESTADOS_LIST = [
+  { key: 'activo', label: 'Activos' },
+  { key: 'pendiente', label: 'Pendientes' },
+  { key: 'inactivo', label: 'Inactivos' },
+]
 
 export default function Avisos() {
   const { showToast, ToastComponent } = useToast()
@@ -50,20 +56,49 @@ export default function Avisos() {
   const [guardando, setGuardando] = useState(false)
   const [probando, setProbando] = useState(null)        // clave en prueba
 
+  // Segmentación por estado (config_club.avisos_escuela_estados)
+  const [estadosSel, setEstadosSel] = useState({ activo: false, pendiente: false, inactivo: false })
+  const [estadosOrig, setEstadosOrig] = useState('')    // valor tal como se cargó (para dirty check)
+  const [conteoEstados, setConteoEstados] = useState({})
+  const [guardandoEstados, setGuardandoEstados] = useState(false)
+
   useEffect(() => { if (tieneAcceso('avisos')) load() }, [])
 
   const load = async () => {
     setLoading(true)
-    const [{ data: pls }, { data: cfg }, { data: evs }] = await Promise.all([
+    const [{ data: pls }, { data: cfgs }, { data: evs }, { data: socs }] = await Promise.all([
       supabase.from('comunicaciones_plantillas').select('*').order('clave'),
-      supabase.from('config_club').select('valor').eq('clave', OPERADOR_KEY).maybeSingle(),
+      supabase.from('config_club').select('clave,valor').in('clave', [OPERADOR_KEY, ESTADOS_KEY]),
       supabase.from('comunicaciones_envios').select('*').order('created_at', { ascending: false }).limit(50),
+      supabase.from('socios').select('estado'),
     ])
+    const cfgMap = Object.fromEntries((cfgs || []).map(c => [c.clave, c.valor]))
     setPlantillas(pls || [])
-    setOperadorEmail(cfg?.valor || '')
-    setOperadorDraft(cfg?.valor || '')
+    setOperadorEmail(cfgMap[OPERADOR_KEY] || '')
+    setOperadorDraft(cfgMap[OPERADOR_KEY] || '')
+
+    const estadosVal = cfgMap[ESTADOS_KEY] || ''
+    const arr = estadosVal.split(',').map(s => s.trim()).filter(Boolean)
+    setEstadosSel({ activo: arr.includes('activo'), pendiente: arr.includes('pendiente'), inactivo: arr.includes('inactivo') })
+    setEstadosOrig(estadosVal)
+    const cnt = {}
+    ;(socs || []).forEach(s => { cnt[s.estado] = (cnt[s.estado] || 0) + 1 })
+    setConteoEstados(cnt)
+
     setEnvios(evs || [])
     setLoading(false)
+  }
+
+  const toggleEstado = (k) => setEstadosSel(prev => ({ ...prev, [k]: !prev[k] }))
+  // Cadena canónica (mismo orden siempre) para guardar y comparar.
+  const estadosStr = ESTADOS_LIST.filter(e => estadosSel[e.key]).map(e => e.key).join(',')
+  const saveEstados = async () => {
+    setGuardandoEstados(true)
+    const { error } = await supabase.from('config_club').update({ valor: estadosStr }).eq('clave', ESTADOS_KEY)
+    setGuardandoEstados(false)
+    if (error) { showToast('Error al guardar: ' + error.message, 'error'); return }
+    setEstadosOrig(estadosStr)
+    showToast('Destinatarios de la Escuela actualizados')
   }
 
   const toggleActivo = async (p) => {
@@ -182,6 +217,45 @@ export default function Avisos() {
               </button>
             )}
           </div>
+        </div>
+      </div>
+
+      {/* Destinatarios de avisos de la Escuela (segmentación por estado) */}
+      <div className="card">
+        <div className="card-header">
+          <div className="card-title"><i className="ti ti-users-group"></i> Destinatarios de avisos de la Escuela</div>
+        </div>
+        <div style={{ padding: '1rem 1.5rem' }}>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif', marginBottom: 12, lineHeight: 1.5 }}>
+            Los avisos de la Escuela de esquí se enviarán solo a socios en los estados marcados
+            (y que tengan activada la recepción en su perfil). Queda fijo hasta que lo cambies.
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {ESTADOS_LIST.map(e => {
+              const on = !!estadosSel[e.key]
+              return (
+                <button key={e.key} onClick={() => editable && toggleEstado(e.key)} disabled={!editable}
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 14px', borderRadius: 8,
+                    cursor: editable ? 'pointer' : 'default', fontFamily: 'sans-serif', fontSize: 13,
+                    border: `1px solid ${on ? 'var(--gold)' : 'var(--border)'}`,
+                    background: on ? 'rgba(201,168,76,0.12)' : 'transparent',
+                    color: on ? 'var(--gold-light)' : 'var(--text-muted)',
+                  }}>
+                  <i className={`ti ${on ? 'ti-square-check' : 'ti-square'}`} style={{ fontSize: 16 }}></i>
+                  {e.label}
+                  {conteoEstados[e.key] != null && <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>({conteoEstados[e.key]})</span>}
+                </button>
+              )
+            })}
+          </div>
+          {editable && (
+            <div style={{ marginTop: 14 }}>
+              <button className="btn btn-primary" onClick={saveEstados} disabled={guardandoEstados || estadosStr === estadosOrig}>
+                {guardandoEstados ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-check"></i> Guardar</>}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
