@@ -11,6 +11,9 @@ const fmtFechaHora = (ts) => {
   return `${fecha.split('-').reverse().join('/')} ${resto.slice(0, 5)}`
 }
 
+// Normaliza para búsqueda: minúsculas + sin tildes (mismo patrón que Bitacora.jsx).
+const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+
 // Valores de ejemplo para el botón "Enviar prueba a mí".
 const EJEMPLOS = {
   nombre: 'Juan Pérez',
@@ -40,6 +43,33 @@ const ESTADOS_LIST = [
   { key: 'inactivo', label: 'Inactivos' },
 ]
 
+// Preferencias por socio (jsonb). Claves ausentes → true por robustez.
+const PREF_COLS = [
+  { key: 'general', label: 'General' },
+  { key: 'dia_abierto', label: 'Fechas' },
+  { key: 'horario', label: 'Horario' },
+]
+const prefsDe = (s) => {
+  const p = s.preferencias_avisos || {}
+  return { general: p.general ?? true, dia_abierto: p.dia_abierto ?? true, horario: p.horario ?? true }
+}
+const esDefaultPref = (p) => p.general && p.dia_abierto && p.horario
+
+// Interruptor compacto (solo icono) para la tabla de preferencias por socio.
+function PrefSwitch({ on, disabled, onToggle }) {
+  return (
+    <button onClick={() => !disabled && onToggle()} disabled={disabled}
+      title={disabled ? 'Requiere el general' : (on ? 'Desactivar' : 'Activar')}
+      style={{
+        background: 'none', border: 'none', padding: 0,
+        cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.4 : 1,
+        color: on ? '#5dcaa5' : 'var(--text-dim)', display: 'inline-flex', alignItems: 'center',
+      }}>
+      <i className={`ti ${on ? 'ti-toggle-right' : 'ti-toggle-left'}`} style={{ fontSize: 24 }}></i>
+    </button>
+  )
+}
+
 export default function Avisos() {
   const { showToast, ToastComponent } = useToast()
   const { user, tieneAcceso, puedeEditar } = useAuth()
@@ -62,6 +92,12 @@ export default function Avisos() {
   const [conteoEstados, setConteoEstados] = useState({})
   const [guardandoEstados, setGuardandoEstados] = useState(false)
 
+  // Preferencias por socio (panel admin)
+  const [sociosPrefs, setSociosPrefs] = useState([])
+  const [searchSocio, setSearchSocio] = useState('')
+  const [soloConCambios, setSoloConCambios] = useState(false)
+  const [savingSocio, setSavingSocio] = useState(null)  // id del socio en guardado
+
   useEffect(() => { if (tieneAcceso('avisos')) load() }, [])
 
   const load = async () => {
@@ -70,7 +106,7 @@ export default function Avisos() {
       supabase.from('comunicaciones_plantillas').select('*').order('clave'),
       supabase.from('config_club').select('clave,valor').in('clave', [OPERADOR_KEY, ESTADOS_KEY]),
       supabase.from('comunicaciones_envios').select('*').order('created_at', { ascending: false }).limit(50),
-      supabase.from('socios').select('estado'),
+      supabase.from('socios').select('id,nombre,apellido,numero_socio,estado,preferencias_avisos').order('apellido'),
     ])
     const cfgMap = Object.fromEntries((cfgs || []).map(c => [c.clave, c.valor]))
     setPlantillas(pls || [])
@@ -84,9 +120,22 @@ export default function Avisos() {
     const cnt = {}
     ;(socs || []).forEach(s => { cnt[s.estado] = (cnt[s.estado] || 0) + 1 })
     setConteoEstados(cnt)
+    setSociosPrefs(socs || [])
 
     setEnvios(evs || [])
     setLoading(false)
+  }
+
+  // Togglear una preferencia de un socio (override-aware: al tocar 'general' NO
+  // se pisan los específicos; solo cambia la clave tocada).
+  const toggleSocioPref = async (s, key) => {
+    const next = { ...prefsDe(s), [key]: !prefsDe(s)[key] }
+    setSavingSocio(s.id)
+    const { error } = await supabase.from('socios').update({ preferencias_avisos: next }).eq('id', s.id)
+    setSavingSocio(null)
+    if (error) { showToast('Error al guardar: ' + error.message, 'error'); return }
+    setSociosPrefs(prev => prev.map(x => x.id === s.id ? { ...x, preferencias_avisos: next } : x))
+    showToast('Preferencia actualizada')
   }
 
   const toggleEstado = (k) => setEstadosSel(prev => ({ ...prev, [k]: !prev[k] }))
@@ -258,6 +307,126 @@ export default function Avisos() {
           )}
         </div>
       </div>
+
+      {/* Preferencias de avisos por socio (panel admin) */}
+      {(() => {
+        const conCambios = sociosPrefs.filter(s => !esDefaultPref(prefsDe(s)))
+        const q = norm(searchSocio).trim()
+        const lista = sociosPrefs.filter(s => {
+          if (soloConCambios && esDefaultPref(prefsDe(s))) return false
+          if (!q) return true
+          return norm(`${s.nombre} ${s.apellido}`).includes(q) || norm(String(s.numero_socio || '')).includes(q)
+        })
+
+        // Fila de un socio. `atenuado` = su grupo (estado) NO está en la lista de
+        // envío masivo actual → se atenúa la fila, pero los switches SIGUEN
+        // editables (no se toca la lógica de `disabled`).
+        const renderFila = (s, atenuado) => {
+          const p = prefsDe(s)
+          const modificado = !esDefaultPref(p)
+          const saving = savingSocio === s.id
+          return (
+            <div key={s.id} style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '9px 1.5rem',
+              borderTop: '0.5px solid rgba(201,168,76,0.08)',
+              background: modificado ? 'rgba(239,159,39,0.05)' : 'transparent',
+              opacity: atenuado ? 0.55 : 1,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: '#c8d0dc', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {modificado && <i className="ti ti-bell-off" title="Tiene avisos desactivados" style={{ fontSize: 13, color: '#fac775' }}></i>}
+                  {s.nombre} {s.apellido}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                  N° {s.numero_socio || '—'} · {s.estado}
+                </div>
+              </div>
+              {PREF_COLS.map(c => {
+                const disabled = saving || (c.key !== 'general' && !p.general) || !editable
+                return (
+                  <div key={c.key} style={{ width: 56, textAlign: 'center', flexShrink: 0 }}>
+                    <PrefSwitch on={p[c.key]} disabled={disabled} onToggle={() => toggleSocioPref(s, c.key)} />
+                  </div>
+                )
+              })}
+            </div>
+          )
+        }
+
+        return (
+          <div className="card">
+            <div className="card-header">
+              <div className="card-title"><i className="ti ti-user-check"></i> Preferencias de avisos por socio</div>
+            </div>
+            <div style={{ padding: '0.75rem 1.5rem 0.25rem', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div className="search-box" style={{ flex: 1, minWidth: 220 }}>
+                <i className="ti ti-search"></i>
+                <input placeholder="Buscar por nombre o N° de socio…" value={searchSocio} onChange={e => setSearchSocio(e.target.value)} disabled={loading} />
+              </div>
+              <button onClick={() => setSoloConCambios(v => !v)}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
+                  fontFamily: 'sans-serif', fontSize: 12.5,
+                  border: `1px solid ${soloConCambios ? 'var(--gold)' : 'var(--border)'}`,
+                  background: soloConCambios ? 'rgba(201,168,76,0.12)' : 'transparent',
+                  color: soloConCambios ? 'var(--gold-light)' : 'var(--text-muted)',
+                }}>
+                <i className={`ti ${soloConCambios ? 'ti-filter-check' : 'ti-filter'}`}></i>
+                Solo con cambios ({conCambios.length})
+              </button>
+            </div>
+
+            {loading ? (
+              <div className="empty-state"><i className="ti ti-loader"></i>Cargando…</div>
+            ) : lista.length === 0 ? (
+              <div className="empty-state"><i className="ti ti-user-off"></i>{q || soloConCambios ? 'Sin resultados.' : 'No hay socios.'}</div>
+            ) : (
+              <div style={{ maxHeight: 460, overflowY: 'auto', padding: '0.25rem 0' }}>
+                {/* Cabecera de columnas */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 1.5rem', fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>Socio</div>
+                  {PREF_COLS.map(c => <div key={c.key} style={{ width: 56, textAlign: 'center', flexShrink: 0 }}>{c.label}</div>)}
+                </div>
+
+                {/* Agrupado por estado: activo → pendiente → inactivo. `estadosSel`
+                    EN VIVO marca qué grupos reciben avisos masivos. */}
+                {ESTADOS_LIST.map(e => {
+                  const grupo = lista.filter(s => s.estado === e.key)
+                  if (grupo.length === 0) return null
+                  const recibeMasivo = !!estadosSel[e.key]
+                  return (
+                    <div key={e.key}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 1.5rem 4px', borderTop: '0.5px solid rgba(201,168,76,0.14)', opacity: recibeMasivo ? 1 : 0.5 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gold-light)', textTransform: 'uppercase', letterSpacing: 0.5 }}>{e.label} ({grupo.length})</span>
+                        {!recibeMasivo && (
+                          <span style={{ fontSize: 10, fontFamily: 'sans-serif', color: 'var(--text-dim)', border: '0.5px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>No reciben avisos masivos</span>
+                        )}
+                      </div>
+                      {grupo.map(s => renderFila(s, !recibeMasivo))}
+                    </div>
+                  )
+                })}
+
+                {/* Robustez: socios con estado fuera de los 3 conocidos (no ocultar a nadie). */}
+                {(() => {
+                  const conocidos = new Set(ESTADOS_LIST.map(e => e.key))
+                  const resto = lista.filter(s => !conocidos.has(s.estado))
+                  if (resto.length === 0) return null
+                  return (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 1.5rem 4px', borderTop: '0.5px solid rgba(201,168,76,0.14)', opacity: 0.5 }}>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--gold-light)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Otros ({resto.length})</span>
+                        <span style={{ fontSize: 10, fontFamily: 'sans-serif', color: 'var(--text-dim)', border: '0.5px solid var(--border)', borderRadius: 4, padding: '1px 6px' }}>No reciben avisos masivos</span>
+                      </div>
+                      {resto.map(s => renderFila(s, true))}
+                    </div>
+                  )
+                })()}
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Registro de envíos */}
       <div className="card">
