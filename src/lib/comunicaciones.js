@@ -38,23 +38,38 @@ export async function estadosAvisosEscuela() {
   return (data?.valor || '').split(',').map(s => s.trim()).filter(Boolean)
 }
 
+// ¿El socio quiere ESTE tipo de aviso de la Escuela? Lógica compartida entre
+// día abierto y horario, sobre socios.preferencias_avisos { general, dia_abierto,
+// horario }:
+//   - general es override maestro: si es false, no recibe NADA.
+//   - además el específico (tipo) debe estar en true.
+//   - claves ausentes → true (robustez).
+// tipo ∈ 'dia_abierto' | 'horario'.
+export function quiereAviso(preferencias, tipo) {
+  const p = preferencias || {}
+  const general = p.general ?? true
+  const especifico = p[tipo] ?? true
+  return general && especifico
+}
+
 // Socios que deben recibir un aviso MASIVO de la Escuela, aplicando la
 // intersección de DOS filtros:
 //   1) estado del socio ∈ estados configurados (config_club.avisos_escuela_estados)
-//   2) socios.recibe_avisos_escuela = true (consentimiento individual)
+//   2) preferencias_avisos: general && dia_abierto (consentimiento granular)
 // Devuelve [{ email, socio_id, nombre }] para que el caller arme las variables.
 export async function resolverDestinatariosEscuela() {
   const estados = await estadosAvisosEscuela()
   if (estados.length === 0) return []
   const { data } = await supabase.from('socios')
-    .select('id, nombre, apellido, email')
+    .select('id, nombre, apellido, email, preferencias_avisos')
     .in('estado', estados)
-    .eq('recibe_avisos_escuela', true)
-  return (data || []).map(s => ({
-    email: s.email || '',
-    socio_id: s.id,
-    nombre: `${s.nombre} ${s.apellido}`,
-  }))
+  return (data || [])
+    .filter(s => quiereAviso(s.preferencias_avisos, 'dia_abierto'))
+    .map(s => ({
+      email: s.email || '',
+      socio_id: s.id,
+      nombre: `${s.nombre} ${s.apellido}`,
+    }))
 }
 
 // Corazón del motor. Dado un aviso (clave de plantilla) y una lista de

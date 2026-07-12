@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
 import { useAuth } from '../lib/useAuth'
 import BitacoraFormModal from '../components/BitacoraFormModal'
-import { dispatchAviso } from '../lib/comunicaciones'
+import { dispatchAviso, quiereAviso } from '../lib/comunicaciones'
 
 const DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado']
 const hoyISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
@@ -218,7 +218,7 @@ export default function GestionarClases() {
       const beneIds = roster.filter(r => r.participante_tipo === 'beneficiario').map(r => r.participante_id)
       const socioIds = [...new Set(roster.map(r => r.socio_id))]
       const nombreMap = {}, socioById = {}
-      const { data: socs } = await supabase.from('socios').select('id,nombre,apellido,email')
+      const { data: socs } = await supabase.from('socios').select('id,nombre,apellido,email,preferencias_avisos')
         .in('id', [...new Set([...socioIds, ...socioPartIds])])
       ;(socs || []).forEach(s => { socioById[s.id] = s; nombreMap[s.id] = `${s.nombre} ${s.apellido}` })
       if (beneIds.length) {
@@ -234,6 +234,8 @@ export default function GestionarClases() {
       const profesorTxt = g.clases_profesores?.nombre ? ` con el profesor ${g.clases_profesores.nombre}` : ''
       const destinatarios = Object.entries(porSocio)
         .filter(([socioId]) => !soloSocioId || socioId === soloSocioId)
+        // Consentimiento granular: solo si quiere avisos de horario (general && horario).
+        .filter(([socioId]) => quiereAviso(socioById[socioId]?.preferencias_avisos, 'horario'))
         .map(([socioId, nombres]) => {
         const soc = socioById[socioId]
         return {
