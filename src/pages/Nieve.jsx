@@ -46,6 +46,13 @@ function shortDate(ymd) {
 function cardinalPalabra(grados) {
   return CARDINALES[Math.round(grados / 45) % 8]
 }
+// Abreviatura de 8 puntos en español (dirección DESDE donde viene el viento,
+// convención meteorológica estándar de Open-Meteo — igual que cardinalPalabra).
+const CARDINALES_ABREV = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO']
+function cardinalAbrev(grados) {
+  if (grados == null || isNaN(grados)) return ''
+  return CARDINALES_ABREV[Math.round(grados / 45) % 8]
+}
 function horaCorta(ts) {
   return new Date(ts).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', hour12: false })
 }
@@ -112,7 +119,12 @@ function SnowForecastLink() {
 }
 
 function WindArrow({ deg }) {
-  // La flecha apunta hacia DONDE sopla (Open-Meteo entrega de dónde viene → +180).
+  // La flecha muestra el FLUJO: apunta hacia DÓNDE VA el viento (formato Windy).
+  // Open-Meteo entrega la dirección DESDE donde viene → +180 para invertir al
+  // sentido del movimiento. Es INTENCIONALMENTE distinta de la abreviatura de
+  // texto (cardinalAbrev), que usa la convención meteorológica estándar (DESDE
+  // dónde viene): la flecha es el movimiento, el texto es el origen — igual que
+  // Windy y otros servicios.
   return (
     <i
       className="ti ti-arrow-narrow-up"
@@ -192,6 +204,7 @@ function DetalleDia({ daily, hourly, i }) {
                 <span style={{ width: 34, flexShrink: 0, color: 'var(--text)' }}>{Math.round(hourly.temperature_2m[idx])}°</span>
                 <span style={{ flex: 1 }} />
                 <WindArrow deg={hourly.wind_direction_10m[idx]} />
+                <span style={{ width: 24, flexShrink: 0, textAlign: 'right', color: 'var(--text-muted)' }}>{cardinalAbrev(hourly.wind_direction_10m[idx])}</span>
                 <span style={{ width: 52, flexShrink: 0, textAlign: 'right', color: windColor(ws), fontWeight: ws > 40 ? 500 : 400 }}>{ws} km/h</span>
               </>
             ) : (
@@ -231,7 +244,7 @@ function DiaCompacto({ daily, i }) {
       </div>
       <div style={{ fontSize: 12, marginTop: 4, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
         <i className="ti ti-wind" style={{ fontSize: 14, color: 'var(--text-dim)' }} />
-        <span style={{ color: windColor(wmax), fontWeight: wmax > 40 ? 500 : 400 }}>{wmax} km/h</span>
+        <span style={{ color: windColor(wmax), fontWeight: wmax > 40 ? 500 : 400 }}>{cardinalAbrev(daily.wind_direction_10m_dominant[i])} {wmax} km/h</span>
       </div>
     </div>
   )
