@@ -1,8 +1,10 @@
 // Pestaña informativa "Nieve" — cámaras en vivo del Volcán Osorno y pronóstico.
-// Puramente informativa: sin datos propios, sin Supabase. Solo iframes/fetch + CSS.
+// El pronóstico viene de Open-Meteo; las cámaras leen sus IDs de YouTube desde
+// la tabla camaras_externas (Supabase, vía useCamaras) porque caducan solos.
 // Visible para cualquier usuario logueado (no usa permisos_rol).
 
 import { useEffect, useRef, useState } from 'react'
+import { useCamaras } from '../hooks/useCamaras'
 
 // ── Pronóstico: Open-Meteo (gratis, sin API key, CORS ok) ──────────────────
 const FORECAST_URL =
@@ -339,14 +341,6 @@ function Pronostico() {
   )
 }
 
-// El Centro Volcán Osorno emite por YouTube Live. Los IDs pueden CADUCAR si el
-// centro corta y reinicia la transmisión: cuando eso pase, el player reporta
-// onError y mostramos el aviso propio. Recuperar el ID es MANUAL (editar aquí).
-const CAMARAS = [
-  { key: 'boleterias', label: 'Boleterías (base)', corto: 'Boletería', videoId: 'BhJ-RasFPTM' },
-  { key: 'cono', label: 'Cono del volcán', corto: 'Cono', videoId: '2uBn7TRSYjI' },
-]
-
 // Carga la YouTube IFrame Player API UNA sola vez (script global compartido).
 let ytApiPromise = null
 function loadYouTubeAPI() {
@@ -446,6 +440,10 @@ function CamaraCard({ label, corto, videoId }) {
 }
 
 export default function Nieve() {
+  // Los IDs de YouTube caducan cuando el centro reinicia la transmisión; un job
+  // los vuelve a resolver cada 15 min y el hook los lee de camaras_externas.
+  const { camaras, cargando, error } = useCamaras()
+
   return (
     <div style={{ maxWidth: 960, margin: '0 auto' }}>
       {/* Encabezado */}
@@ -477,9 +475,46 @@ export default function Nieve() {
             gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
             gap: '1.25rem',
           }}>
-            {CAMARAS.map(cam => (
-              <CamaraCard key={cam.key} label={cam.label} corto={cam.corto} videoId={cam.videoId} />
-            ))}
+            {cargando ? (
+              // Placeholders del mismo tamaño que las tarjetas: evita el salto
+              // de layout mientras Supabase responde.
+              [0, 1].map(i => (
+                <div key={i} style={{
+                  aspectRatio: '16 / 9', width: '100%',
+                  background: 'var(--navy)', border: '0.5px solid var(--border)',
+                  borderRadius: 10,
+                }} />
+              ))
+            ) : camaras.length === 0 ? (
+              <div style={{
+                gridColumn: '1 / -1',
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center', gap: 8,
+                padding: '2rem 1rem', textAlign: 'center',
+                background: 'var(--navy)', border: '0.5px solid var(--border)',
+                borderRadius: 10,
+                color: 'var(--text-muted)', fontFamily: 'sans-serif', fontSize: 13,
+              }}>
+                <i className="ti ti-video-off" style={{ fontSize: 28, color: 'var(--text-dim)' }}></i>
+                <div>
+                  {error
+                    ? 'No pudimos cargar las cámaras. Reintenta en unos minutos.'
+                    : 'El centro no está transmitiendo en este momento.'}
+                </div>
+                <a
+                  href="https://centrovolcanosorno.cl/live-cam/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--gold)', fontSize: 12, textDecoration: 'underline' }}
+                >
+                  Ver en el sitio del centro
+                </a>
+              </div>
+            ) : (
+              camaras.map(cam => (
+                <CamaraCard key={cam.key} label={cam.label} corto={cam.corto} videoId={cam.videoId} />
+              ))
+            )}
           </div>
         </div>
       </div>
