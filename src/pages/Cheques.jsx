@@ -46,7 +46,9 @@ export default function Cheques() {
   useEffect(() => {
     load()
     supabase.from('socios').select('id,nombre,apellido,numero_socio').order('numero_socio').then(({ data }) => setSocios(data || []))
-    supabase.from('movimientos').select('id,fecha,descripcion,monto').eq('tipo','abono').eq('estado','pendiente').order('fecha', { ascending: false }).then(({ data }) => setMovimientos(data || []))
+    // `.is('cheque_id', null)`: un movimiento que ya tiene cheque no puede ofrecerse
+    // para amarrar otro — el doble amarre se corta antes de llegar al selector.
+    supabase.from('movimientos').select('id,fecha,descripcion,monto').eq('tipo','abono').eq('estado','pendiente').is('cheque_id', null).order('fecha', { ascending: false }).then(({ data }) => setMovimientos(data || []))
   }, [])
 
   const load = async () => {
@@ -183,29 +185,68 @@ export default function Cheques() {
     }
 
     const ahora = new Date().toISOString() // timestamp de auditoría (no es fecha de display)
-    const movFecha = movimientos.find(m => m.id === movId)?.fecha || null
+    const mov = movimientos.find(m => m.id === movId)
+    const movFecha = mov?.fecha || null
 
-    // 1) Cheque → movimiento. Preservar la fecha_deposito FÍSICA: solo tomar la
-    //    del banco si el cheque aún no la tenía (caso 'por_depositar' que recién cae).
+    // GUARD contra doble amarre: releer el movimiento (la lista en memoria puede
+    // ser anterior a que otro usuario lo calzara desde Cartola Bancaria).
+    const { data: fresco, error: eFresco } = await supabase.from('movimientos')
+      .select('id, estado, cheque_id').eq('id', movId).maybeSingle()
+    if (eFresco) { showToast('No se pudo verificar el movimiento: ' + eFresco.message, 'error'); return }
+    if (!fresco) { showToast('El movimiento ya no existe — recarga la página', 'error'); return }
+    if (fresco.cheque_id) {
+      const { data: ocupa } = await supabase.from('cheques').select('numero').eq('id', fresco.cheque_id).maybeSingle()
+      showToast(`Este movimiento ya está conciliado con el cheque N° ${ocupa?.numero ?? fresco.cheque_id}`, 'error')
+      return
+    }
+    if (fresco.estado === 'conciliado') { showToast('Este movimiento ya está conciliado — recarga la página', 'error'); return }
+
+    // 1) Cheque → movimiento. La fecha del banco manda, pero antes se respalda la
+    //    fecha original en fecha_documento si estaba vacía, para que el descalce
+    //    (desde Cartola Bancaria) pueda devolverla.
     const chequeUpdate = {
       movimiento_id: movId,
       estado: 'depositado',
       conciliado_en: ahora,
       conciliado_por: user?.id || null,
+      fecha_deposito: movFecha,
     }
-    if (!cheque.fecha_deposito) chequeUpdate.fecha_deposito = movFecha
-    const { error: eCheque } = await supabase.from('cheques').update(chequeUpdate).eq('id', chequeId)
+    if (!cheque.fecha_documento) chequeUpdate.fecha_documento = cheque.fecha_deposito
+    // `.is('movimiento_id', null)` es el candado optimista contra el doble amarre.
+    const { data: filas, error: eCheque } = await supabase.from('cheques')
+      .update(chequeUpdate).eq('id', chequeId).is('movimiento_id', null).select('id')
     if (eCheque) { showToast('Error al amarrar el cheque: ' + eCheque.message, 'error'); return }
+    if (!filas || filas.length === 0) {
+      showToast('Este cheque ya fue amarrado a otro movimiento — recarga la página', 'error'); load(); return
+    }
 
-    // 2) Propagar SOLO al pago de ESTE cheque que aún no tiene movimiento.
+    // 2) Movimiento → cheque: el ESPEJO del vínculo. Los dos lados se escriben
+    //    juntos; si este falla, el paso 1 se revierte con un update compensatorio.
+    const { error: eMov } = await supabase.from('movimientos').update({
+      cheque_id: chequeId,
+      estado: 'conciliado',
+      monto_conciliado: cheque.monto,
+      monto_pendiente: 0,
+    }).eq('id', movId)
+    if (eMov) {
+      await supabase.from('cheques').update({
+        movimiento_id: null,
+        estado: cheque.estado,
+        conciliado_en: null,
+        conciliado_por: null,
+        fecha_deposito: cheque.fecha_deposito,
+        fecha_documento: cheque.fecha_documento,
+      }).eq('id', chequeId)
+      showToast('Error al conciliar el movimiento (se revirtió el cheque): ' + eMov.message, 'error')
+      load(); return
+    }
+
+    // 3) Propagar SOLO al pago de ESTE cheque que aún no tiene movimiento.
     //    No crea pagos (solo liga el existente) → no cambia el total de cuota. Idempotente.
     const { error: ePago } = await supabase.from('pagos_cuota')
       .update({ movimiento_id: movId, conciliado_en: ahora, conciliado_por: user?.id || null })
       .eq('cheque_id', chequeId).is('movimiento_id', null)
-    if (ePago) { showToast('Cheque amarrado, pero falló ligar su pago: ' + ePago.message, 'error'); load(); return }
-
-    // 3) Marcar el movimiento como conciliado.
-    await supabase.from('movimientos').update({ estado: 'conciliado' }).eq('id', movId)
+    if (ePago) { showToast('Cheque y movimiento calzados, pero falló ligar el pago: ' + ePago.message, 'error'); load(); return }
 
     showToast('Cheque amarrado a cartola correctamente')
     setAmarrarId(null); setMovId(''); load()

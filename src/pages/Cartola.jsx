@@ -52,6 +52,8 @@ export default function Cartola() {
   const [otrosIngresosForm, setOtrosIngresosForm] = useState({})
   const [candidatos, setCandidatos] = useState([]) // ingresos manuales sin movimiento_id, normalizados
   const [calzando, setCalzando] = useState({}) // { movId: true } mientras corre el RPC
+  // 3B — diálogo de desempate cuando un depósito-de-cheque tiene >1 cheque candidato
+  const [selectorCheque, setSelectorCheque] = useState(null) // { mov, candidatos:[{...,dist}], preseleccion }
 
   // Carga todos los ingresos manuales aún no conciliados (sin movimiento_id) y los
   // normaliza a una forma común para el matcher: { tipo, id, monto, fecha, socio, concepto, detalle }.
@@ -60,9 +62,13 @@ export default function Cartola() {
       supabase.from('pagos_cuota')
         .select('id, monto, fecha_pago, concepto, socio_id, cheque_id, socios(id,nombre,apellido,numero_socio,rut), periodos_cuota(anio)')
         .is('movimiento_id', null),
+      // El criterio de candidatura es "sin movimiento", NO el estado. Además de los
+      // 'por_depositar', entran los 'depositado' que siguen sin movimiento_id: el
+      // cheque cuyo depósito llega en la cartola del mes siguiente, y el rescatado
+      // de un descalce. Solo 'anulado' queda fuera.
       supabase.from('cheques')
         .select('id, numero, monto, fecha_deposito, fecha_documento, concepto, concepto_descripcion, socio_id, estado, socios(id,nombre,apellido,numero_socio,rut)')
-        .is('movimiento_id', null).neq('estado', 'anulado'),
+        .is('movimiento_id', null).in('estado', ['por_depositar', 'depositado']),
       supabase.from('otros_ingresos')
         .select('id, monto, fecha, concepto, descripcion')
         .is('movimiento_id', null),
@@ -167,16 +173,27 @@ export default function Cartola() {
   const getPagosDelMovimiento = (movId) => pagosMovimientos.filter(p => p.movimiento_id === movId)
   const getOtroIngresoDe = (movId) => otrosIngresosTodos.find(o => o.movimiento_id === movId)
 
+  // Distancia en días entre dos fechas 'YYYY-MM-DD'. Date.UTC (no new Date) evita
+  // el bug de timezone chileno. Sin fecha en alguno de los dos lados → Infinity,
+  // así el candidato sin fecha queda último al desempatar por cercanía.
+  const distanciaDias = (a, b) => {
+    if (!a || !b) return Infinity
+    const t = (f) => { const [y, m, d] = f.split('-').map(Number); return Date.UTC(y, m - 1, d) / 86400000 }
+    return Math.abs(t(a) - t(b))
+  }
+
   // Puntúa un candidato contra un movimiento de abono. El RPC exige monto exacto,
   // así que un monto distinto descarta el candidato (devuelve null). Sobre esa base
   // se suman puntos por cercanía de fecha y por coincidencia de socio (id, RUT o nombre).
+  // Devuelve también `dist` (días de separación) para poder desempatar por cercanía.
   const scoreCandidato = (mov, cand) => {
     if (cand.monto !== Math.abs(mov.monto)) return null
     let score = 50
     const razones = ['Monto exacto']
+    const dist = distanciaDias(cand.fecha, mov.fecha)
 
     if (cand.fecha && mov.fecha) {
-      const dias = Math.abs((new Date(mov.fecha) - new Date(cand.fecha)) / 86400000)
+      const dias = dist
       if (dias <= 1) { score += 30; razones.push('Misma fecha') }
       else if (dias <= 3) { score += 20; razones.push('±3 días') }
       else if (dias <= 7) { score += 12; razones.push('±7 días') }
@@ -199,14 +216,16 @@ export default function Cartola() {
         }
       }
     }
-    return { score, razones }
+    return { score, razones, dist }
   }
 
-  // Top-5 candidatos calzables para un movimiento, ordenados por score descendente.
+  // Top-5 candidatos calzables para un movimiento. Orden: score descendente y, a
+  // igual score, por cercanía de fecha ascendente — un cheque fechado a 7 meses no
+  // puede aparecer al mismo nivel que uno de la semana (ambos suman 0 por fecha).
   const getSugerencias = (mov) => candidatos
     .map(cand => { const s = scoreCandidato(mov, cand); return s ? { ...cand, ...s } : null })
     .filter(Boolean)
-    .sort((a, b) => b.score - a.score)
+    .sort((a, b) => (b.score - a.score) || (a.dist - b.dist))
     .slice(0, 5)
 
   // Etiqueta corta por tipo de ingreso (para el chip de la sugerencia).
@@ -412,11 +431,236 @@ export default function Cartola() {
     })
   }
 
+  // 3B — GUARD: el auto-amarre de cheque SOLO aplica a depósitos de cheque, NO a
+  // transferencias. Los depósitos de cheque llegan como "Depósito Documento …" sin
+  // rut_detectado; las transferencias traen rut_detectado + "… Transf. NOMBRE".
+  const esDepositoDeCheque = (mov) =>
+    !mov.rut_detectado && /dep[óo]sito\s+documento/i.test(mov.descripcion || '')
+
+  // Cheques candidatos para auto-amarre: del socio, monto exacto, ya depositados y
+  // aún sin movimiento. (Query directa a cheques; no pasa por loadCandidatos/getSugerencias,
+  // que sirven al matcher general y excluyen cheques de cuota.)
+  const buscarChequesDepositados = async (socioId, monto) => {
+    if (!socioId) return []
+    const { data } = await supabase.from('cheques')
+      .select('id, numero, monto, estado, fecha_deposito, fecha_documento, socio_id, concepto, movimiento_id')
+      .eq('socio_id', socioId).eq('monto', monto)
+      .eq('estado', 'depositado').is('movimiento_id', null)
+    return data || []
+  }
+
+  // ────────────────────────────────────────────────────────────
+  // Vínculo cheque ↔ movimiento: SIEMPRE en espejo
+  // ────────────────────────────────────────────────────────────
+  // El vínculo vive en dos columnas que deben moverse juntas:
+  //   cheques.movimiento_id  ↔  movimientos.cheque_id
+  // Escribir un solo lado deja el otro mintiendo: el movimiento sigue "Sin calce"
+  // aunque el cheque ya esté amarrado, o el cheque queda 'depositado' apuntando a
+  // un movimiento que ya se descalzó. Las tres funciones de abajo son el único
+  // camino permitido para tocar ese vínculo desde la cartola.
+
+  // GUARD contra doble amarre. Relee el movimiento en la DB (no confía en el estado
+  // de React, que puede venir de una carga anterior a que otro usuario/pestaña
+  // calzara) y devuelve un mensaje de error si ya está tomado.
+  const verificarMovimientoLibre = async (movId) => {
+    const { data: fresco, error } = await supabase.from('movimientos')
+      .select('id, estado, cheque_id').eq('id', movId).maybeSingle()
+    if (error) return 'No se pudo verificar el movimiento: ' + error.message
+    if (!fresco) return 'El movimiento ya no existe — refresca la cartola'
+    if (fresco.cheque_id) {
+      const { data: ch } = await supabase.from('cheques')
+        .select('numero').eq('id', fresco.cheque_id).maybeSingle()
+      return `Este movimiento ya está conciliado con el cheque N° ${ch?.numero ?? fresco.cheque_id}`
+    }
+    if (fresco.estado === 'conciliado') return 'Este movimiento ya está conciliado — refresca la cartola'
+    return null
+  }
+
+  // CALZAR — escribe los dos lados como una sola operación.
+  // 1) cheques: antes de pisar fecha_deposito con la fecha de la cartola, respalda
+  //    la fecha original en fecha_documento si estaba vacía (así el descalce puede
+  //    devolverla, y quedan cubiertos los cheques antiguos sin fecha_documento).
+  // 2) movimientos: el espejo (cheque_id) + estado y montos conciliados.
+  // Si (2) falla, (1) se revierte con un update compensatorio: nunca un solo lado.
+  // `extraMovimiento` permite sumar campos al update del movimiento (p. ej. socio_id)
+  // sin partir la escritura en dos y perder la compensación.
+  const escribirCalceCheque = async (mov, cheque, extraMovimiento = {}) => {
+    const ahora = new Date().toISOString() // timestamp de auditoría (no es fecha de display)
+
+    // 1) Cheque → movimiento.
+    const updCheque = {
+      estado: 'depositado',
+      movimiento_id: mov.id,
+      conciliado_en: ahora,
+      conciliado_por: user?.id || null,
+      fecha_deposito: mov.fecha,
+    }
+    if (!cheque.fecha_documento) updCheque.fecha_documento = cheque.fecha_deposito
+    // `.is('movimiento_id', null)` es el candado optimista: si otro proceso lo amarró
+    // entremedio, el update no afecta filas y abortamos antes de tocar el movimiento.
+    const { data: filas, error: e1 } = await supabase.from('cheques')
+      .update(updCheque).eq('id', cheque.id).is('movimiento_id', null).select('id')
+    if (e1) throw new Error('Error al amarrar el cheque: ' + e1.message)
+    if (!filas || filas.length === 0) throw new Error(`El cheque N° ${cheque.numero} ya fue amarrado a otro movimiento — refresca la cartola`)
+
+    // 2) Movimiento → cheque (el espejo).
+    const { error: e2 } = await supabase.from('movimientos').update({
+      cheque_id: cheque.id,
+      estado: 'conciliado',
+      monto_conciliado: cheque.monto,
+      monto_pendiente: 0,
+      ...extraMovimiento,
+    }).eq('id', mov.id)
+
+    if (e2) {
+      // Compensación: deshacer el paso 1 con los valores previos del cheque.
+      await supabase.from('cheques').update({
+        estado: cheque.estado,
+        movimiento_id: null,
+        conciliado_en: null,
+        conciliado_por: null,
+        fecha_deposito: cheque.fecha_deposito,
+        fecha_documento: cheque.fecha_documento,
+      }).eq('id', cheque.id)
+      throw new Error('Error al conciliar el movimiento (se revirtió el cheque): ' + e2.message)
+    }
+  }
+
+  // DESCALZAR — revierte los dos lados. Espejo exacto de escribirCalceCheque:
+  // el cheque vuelve a 'por_depositar' sin vínculo y recupera su fecha original
+  // desde fecha_documento; el movimiento vuelve a pendiente con su monto libre.
+  const escribirDescalceCheque = async (mov, cheque) => {
+    const updCheque = {
+      // Un cheque anulado no revive al descalzar: pierde el vínculo, no el estado.
+      estado: cheque.estado === 'anulado' ? 'anulado' : 'por_depositar',
+      movimiento_id: null,
+      conciliado_en: null,
+      conciliado_por: null,
+    }
+    // Si fecha_documento es null no hay fecha original que devolver: dejamos
+    // fecha_deposito como está en vez de borrarla.
+    if (cheque.fecha_documento) updCheque.fecha_deposito = cheque.fecha_documento
+
+    const { error: e1 } = await supabase.from('cheques').update(updCheque).eq('id', cheque.id)
+    if (e1) throw new Error('Error al liberar el cheque: ' + e1.message)
+
+    // socio_id vuelve a null igual que en el desconciliar normal: así el movimiento
+    // reaparece en "Sin calce" y no arrastra el socio que le puso el calce anterior.
+    const { error: e2 } = await supabase.from('movimientos').update({
+      cheque_id: null,
+      estado: 'pendiente',
+      socio_id: null,
+      monto_conciliado: 0,
+      monto_pendiente: Math.abs(mov.monto),
+    }).eq('id', mov.id)
+
+    if (e2) {
+      // Compensación: volver a dejar el cheque como estaba amarrado.
+      await supabase.from('cheques').update({
+        estado: cheque.estado,
+        movimiento_id: cheque.movimiento_id,
+        conciliado_en: cheque.conciliado_en,
+        conciliado_por: cheque.conciliado_por,
+        fecha_deposito: cheque.fecha_deposito,
+      }).eq('id', cheque.id)
+      throw new Error('Error al descalzar el movimiento (se revirtió el cheque): ' + e2.message)
+    }
+  }
+
+  // Cheque amarrado a un movimiento. Consulta por cheques.movimiento_id (el lado
+  // que sí se escribía históricamente), así que también encuentra los vínculos
+  // antiguos en que movimientos.cheque_id quedó null.
+  const buscarChequeDelMovimiento = async (movId) => {
+    const { data } = await supabase.from('cheques')
+      .select('id, numero, monto, estado, movimiento_id, fecha_deposito, fecha_documento, conciliado_en, conciliado_por')
+      .eq('movimiento_id', movId)
+    return data || []
+  }
+
+  // Amarra un cheque depositado a un movimiento, igual que el backfill de la etapa 2:
+  // idempotente y sin crear pagos extra. El vínculo cheque ↔ movimiento lo escribe
+  // escribirCalceCheque (los dos lados o ninguno); acá sólo se le suma el pago.
+  const amarrarChequeAMovimiento = async (mov, cheque) => {
+    const ahora = new Date().toISOString() // timestamp de auditoría (no es fecha de display)
+    try {
+      // Idempotente: si ya está amarrado a este movimiento, no repetir.
+      if (cheque.movimiento_id === mov.id) { setSelectorCheque(null); return true }
+      if (cheque.movimiento_id) { showToast('Ese cheque ya está amarrado a otro movimiento', 'error'); return false }
+
+      // GUARD doble amarre: releer el movimiento antes de escribir nada.
+      const ocupadoPor = await verificarMovimientoLibre(mov.id)
+      if (ocupadoPor) {
+        showToast(ocupadoPor, 'error')
+        setSelectorCheque(null)
+        loadMovimientos(selectedCartola.id)
+        return false
+      }
+
+      // 1) Vínculo completo: cheque + movimiento en espejo.
+      await escribirCalceCheque(mov, cheque, { socio_id: mov.socio_id || cheque.socio_id })
+
+      // 2) Ligar el pago EXISTENTE de ESE cheque (sin movimiento). No crea pagos.
+      const { data: pagosLigados, error: e2 } = await supabase.from('pagos_cuota')
+        .update({ movimiento_id: mov.id, conciliado_en: ahora, conciliado_por: user?.id || null })
+        .eq('cheque_id', cheque.id).is('movimiento_id', null).select('id')
+      // El calce ya quedó completo y consistente; lo que falla acá es sólo el pago.
+      if (e2) throw new Error('Cheque y movimiento calzados, pero falló ligar el pago: ' + e2.message)
+
+      // 3) Si el cheque no tenía pago, crear uno ligado a cheque + movimiento (concepto
+      //    null = cuenta como cuota). Idempotente: solo si no existe ya uno para este mov.
+      if (!pagosLigados || pagosLigados.length === 0) {
+        const { data: yaExiste } = await supabase.from('pagos_cuota')
+          .select('id').eq('cheque_id', cheque.id).eq('movimiento_id', mov.id)
+        if (!yaExiste || yaExiste.length === 0) {
+          const { error: e3 } = await supabase.from('pagos_cuota').insert({
+            socio_id: cheque.socio_id, periodo_id: null, monto: cheque.monto,
+            fecha_pago: mov.fecha, forma_pago: 'cheque', movimiento_id: mov.id,
+            cheque_id: cheque.id, concepto: null,
+            comentario: `Cheque depositado amarrado desde cartola — ${mov.descripcion}`,
+            conciliado_en: ahora, conciliado_por: user?.id || null,
+          })
+          if (e3) throw new Error('Error al crear el pago del cheque: ' + e3.message)
+        }
+      }
+
+      setConciliando(prev => { const n = { ...prev }; delete n[mov.id]; return n })
+      setSelectorCheque(null)
+      showToast(`Cheque N°${cheque.numero} amarrado al depósito (sin crear pago nuevo)`)
+      loadMovimientos(selectedCartola.id)
+      loadCandidatos()
+      loadPagosSinConciliar()
+      return true
+    } catch (err) {
+      showToast(err.message, 'error')
+      return false
+    }
+  }
+
   const handleConfirmarCalce = async (mov) => {
     const c = conciliando[mov.id]
     if (!c?.lineas?.length) return
 
     const montoTotal = Math.abs(mov.monto)
+
+    // 3B — Auto-amarre de cheque depositado (SOLO caso simple: un socio, 1 línea, y el
+    // movimiento es un depósito de cheque). Multi-línea (3D) y "por depositar" (3C) NO entran.
+    if (c.lineas.length === 1 && mov.socio_id && esDepositoDeCheque(mov)) {
+      const cands = await buscarChequesDepositados(mov.socio_id, montoTotal)
+      if (cands.length === 1) {
+        await amarrarChequeAMovimiento(mov, cands[0])
+        return
+      }
+      if (cands.length > 1) {
+        const cd = cands
+          .map(ch => ({ ...ch, dist: distanciaDias(ch.fecha_deposito, mov.fecha) }))
+          .sort((a, b) => a.dist - b.dist)
+        const empate = cd.length > 1 && cd[0].dist === cd[1].dist
+        setSelectorCheque({ mov, candidatos: cd, preseleccion: empate ? null : cd[0].id })
+        return
+      }
+      // 0 candidatos → no es un cheque a amarrar; sigue el flujo normal.
+    }
+
     const { distribuido, restante, completo, excede } = calcularDistribucion(c.lineas, montoTotal)
 
     if (!completo) {
@@ -586,7 +830,13 @@ export default function Cartola() {
   }
 
   const handleDesconciliar = async (mov) => {
-    if (!confirm('¿Desconciliar este movimiento? Se eliminarán los pagos de cuota y otros ingresos asociados, y el movimiento volverá a estado pendiente.')) return
+    // Buscar el cheque ANTES de confirmar: si hay uno amarrado, el aviso tiene que
+    // decir que también se libera (y con qué fecha vuelve).
+    const chequesAmarrados = await buscarChequeDelMovimiento(mov.id)
+    const aviso = chequesAmarrados.length > 0
+      ? `¿Desconciliar este movimiento? Se eliminarán los pagos de cuota y otros ingresos asociados, el cheque N° ${chequesAmarrados.map(c => c.numero).join(', N° ')} volverá a 'Por depositar' con su fecha original, y el movimiento volverá a estado pendiente.`
+      : '¿Desconciliar este movimiento? Se eliminarán los pagos de cuota y otros ingresos asociados, y el movimiento volverá a estado pendiente.'
+    if (!confirm(aviso)) return
     try {
       const { error: ePago } = await supabase.from('pagos_cuota').delete().eq('movimiento_id', mov.id)
       if (ePago) throw new Error(ePago.message)
@@ -594,9 +844,23 @@ export default function Cartola() {
       const { error: eOtros } = await supabase.from('otros_ingresos').delete().eq('movimiento_id', mov.id)
       if (eOtros) throw new Error(eOtros.message)
 
+      // Cheque amarrado: revertir los dos lados juntos (cheque + movimiento). Sin
+      // esto el cheque queda 'depositado' apuntando a un movimiento ya descalzado,
+      // invisible como candidato y con la fecha de la cartola en vez de la suya.
+      if (chequesAmarrados.length > 0) {
+        for (const ch of chequesAmarrados) await escribirDescalceCheque(mov, ch)
+        setConciliando(prev => { const n = { ...prev }; delete n[mov.id]; return n })
+        showToast(`Movimiento desconciliado — cheque N° ${chequesAmarrados.map(c => c.numero).join(', N° ')} liberado`)
+        loadMovimientos(selectedCartola.id)
+        loadCandidatos()
+        loadPagosSinConciliar()
+        return
+      }
+
       const { error: eMov } = await supabase.from('movimientos').update({
         estado: 'pendiente',
         socio_id: null,
+        cheque_id: null,
         monto_conciliado: 0,
         monto_pendiente: 0,
       }).eq('id', mov.id)
@@ -605,6 +869,7 @@ export default function Cartola() {
       setConciliando(prev => { const n = { ...prev }; delete n[mov.id]; return n })
       showToast('Movimiento desconciliado correctamente')
       loadMovimientos(selectedCartola.id)
+      loadCandidatos()
     } catch (e) {
       showToast('Error al desconciliar: ' + e.message, 'error')
     }
@@ -638,6 +903,28 @@ export default function Cartola() {
   const handleCalzarSugerencia = async (mov, cand) => {
     setCalzando(prev => ({ ...prev, [mov.id]: true }))
     try {
+      // GUARD doble amarre: releer el movimiento. El RPC ya rechaza el estado
+      // 'conciliado', pero acá el mensaje puede nombrar el cheque que lo ocupa.
+      const ocupadoPor = await verificarMovimientoLibre(mov.id)
+      if (ocupadoPor) {
+        showToast(ocupadoPor, 'error')
+        loadMovimientos(selectedCartola.id)
+        setCalzando(prev => { const n = { ...prev }; delete n[mov.id]; return n })
+        return
+      }
+
+      // El RPC pisa fecha_deposito con la fecha de la cartola. Respaldar antes la
+      // fecha original en fecha_documento si estaba vacía, para que el descalce
+      // pueda devolverla. Idempotente: si ya tiene fecha_documento, no se toca.
+      if (cand.tipo === 'cheque') {
+        const { data: ch } = await supabase.from('cheques')
+          .select('fecha_deposito, fecha_documento').eq('id', cand.id).maybeSingle()
+        if (ch && !ch.fecha_documento && ch.fecha_deposito) {
+          await supabase.from('cheques')
+            .update({ fecha_documento: ch.fecha_deposito }).eq('id', cand.id)
+        }
+      }
+
       const { error } = await supabase.rpc('calzar_movimiento_con_ingreso', {
         p_movimiento_id: mov.id,
         p_tipo_ingreso: cand.tipo,
@@ -645,6 +932,16 @@ export default function Cartola() {
         p_usuario_id: user?.id || null,
       })
       if (error) throw new Error(error.message)
+
+      // Espejo del vínculo: el RPC amarra cheques.movimiento_id; acá se cierra el
+      // otro lado. `.is('cheque_id', null)` lo hace idempotente y compatible con la
+      // versión del RPC que ya escribe cheque_id por su cuenta.
+      if (cand.tipo === 'cheque') {
+        const { error: eEspejo } = await supabase.from('movimientos')
+          .update({ cheque_id: cand.id }).eq('id', mov.id).is('cheque_id', null)
+        if (eEspejo) throw new Error('Calce hecho, pero no se pudo enlazar el movimiento al cheque: ' + eEspejo.message)
+      }
+
       showToast(`Movimiento calzado con ${tipoIngresoLabel(cand.tipo).toLowerCase()}`)
       loadMovimientos(selectedCartola.id)
       loadCandidatos()
@@ -1529,6 +1826,41 @@ export default function Cartola() {
             )}
           </div>
         </>
+      )}
+
+      {selectorCheque && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setSelectorCheque(null)}>
+          <div className="modal" style={{ width: 560 }}>
+            <div className="modal-header">
+              <div className="modal-title"><i className="ti ti-writing"></i> ¿Qué cheque amarrar?</div>
+              <button className="btn btn-sm" onClick={() => setSelectorCheque(null)}><i className="ti ti-x"></i></button>
+            </div>
+            <div style={{ padding: '0 1.25rem 0.5rem', fontSize: 13, color: 'var(--text-muted)' }}>
+              {selectorCheque.mov.socios ? `${selectorCheque.mov.socios.nombre} ${selectorCheque.mov.socios.apellido}` : 'El socio'} tiene varios cheques depositados de {formatearMontoConSimbolo(Math.abs(selectorCheque.mov.monto))} sin amarrar. {selectorCheque.preseleccion ? 'Se preseleccionó el de fecha más cercana al depósito' : 'Hay empate de fechas — elige cuál corresponde'} ({selectorCheque.mov.fecha?.split('-').reverse().join('/')}):
+            </div>
+            <div style={{ padding: '0.5rem 1.25rem', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {selectorCheque.candidatos.map((ch, i) => {
+                const esPre = ch.id === selectorCheque.preseleccion
+                return (
+                  <button key={ch.id} className={`btn${esPre ? ' btn-primary' : ''}`} style={{ justifyContent: 'space-between', textAlign: 'left' }}
+                    onClick={() => amarrarChequeAMovimiento(selectorCheque.mov, ch)}>
+                    <span>
+                      <i className="ti ti-writing" style={{ marginRight: 6 }}></i>
+                      Cheque N°{ch.numero}
+                      {esPre && <span className="badge badge-active" style={{ marginLeft: 8 }}>Más cercano</span>}
+                    </span>
+                    <span style={{ color: esPre ? 'inherit' : 'var(--text-muted)', fontSize: 12 }}>
+                      dep. {ch.fecha_deposito ? ch.fecha_deposito.split('-').reverse().join('/') : '—'} · {formatearMontoConSimbolo(ch.monto)}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setSelectorCheque(null)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

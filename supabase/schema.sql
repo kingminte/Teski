@@ -71,6 +71,9 @@ create table if not exists movimientos (
   n_documento text,
   tipo text not null check (tipo in ('abono','cargo')),
   socio_id uuid references socios(id) on delete set null,
+  -- Espejo de cheques.movimiento_id: los dos lados del vínculo se escriben juntos
+  -- (ver 20260804_calce_cheque_espejo.sql). Null = el movimiento no viene de un cheque.
+  cheque_id uuid,
   chequera_detalle_id uuid,
   rut_detectado text,
   nombre_detectado text,
