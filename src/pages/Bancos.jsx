@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
 import { useAuth } from '../lib/useAuth'
 import { useBancos } from '../lib/useBancos'
 import RutInput from '../components/RutInput'
+import { validarRut } from '../lib/rut'
 
 const BANCOS_INICIALES = [
   'Banco Estado', 'BCI', 'Santander', 'Scotiabank', 'Falabella',
@@ -12,6 +13,18 @@ const BANCOS_INICIALES = [
 ]
 
 const TIPOS_CUENTA = ['Cuenta corriente', 'Cuenta vista', 'Cuenta ahorro']
+
+// Datos bancarios de proveedores
+const BANCOS_PROVEEDOR = [
+  'Banco de Chile', 'BancoEstado', 'Santander', 'BCI', 'Scotiabank', 'Itaú',
+  'Banco Falabella', 'Banco Ripley', 'Banco Security', 'Banco BICE',
+  'Coopeuch', 'Tenpo', 'Mercado Pago',
+]
+const TIPOS_CUENTA_PROVEEDOR = ['Cuenta Corriente', 'Cuenta Vista', 'Cuenta de Ahorro']
+const CAMPOS_BANCARIOS = ['banco', 'banco_tipo_cuenta', 'banco_numero_cuenta', 'banco_titular_nombre', 'banco_titular_rut', 'banco_email']
+const EMPTY_BANCARIO = { banco: '', banco_tipo_cuenta: '', banco_numero_cuenta: '', banco_titular_nombre: '', banco_titular_rut: '', banco_email: '' }
+const soloDigitos = (v) => String(v || '').replace(/\D/g, '')
+const tieneDatosBancarios = (p) => CAMPOS_BANCARIOS.some(c => (p?.[c] || '').toString().trim())
 
 const CONFIG_KEYS = {
   banco_nombre: 'Santander',
@@ -58,7 +71,7 @@ export default function Bancos() {
   const [filtroCuentaTipo, setFiltroCuentaTipo] = useState('todos')
 
   // --- Tab Proveedores ---
-  const EMPTY_PROVEEDOR = { nombre: '', rut: '', tipo: 'empresa', giro: '', direccion: '', telefono: '', email: '', contacto: '', activo: true }
+  const EMPTY_PROVEEDOR = { nombre: '', rut: '', tipo: 'empresa', giro: '', direccion: '', telefono: '', email: '', contacto: '', activo: true, ...EMPTY_BANCARIO }
   const [proveedores, setProveedores] = useState([])
   const [proveedoresLoading, setProveedoresLoading] = useState(false)
   const [showModalProveedor, setShowModalProveedor] = useState(false)
@@ -67,6 +80,9 @@ export default function Bancos() {
   const [savingProveedor, setSavingProveedor] = useState(false)
   const [filtroProveedorActivo, setFiltroProveedorActivo] = useState('todos')
   const [busquedaProveedor, setBusquedaProveedor] = useState('')
+  const [seccionBancaria, setSeccionBancaria] = useState(false)
+  const [bancoOtro, setBancoOtro] = useState(false)
+  const [proveedorExpandido, setProveedorExpandido] = useState(null)
 
   useEffect(() => { load(); loadConfig(); loadCuentas(); loadProveedores() }, [])
 
@@ -207,10 +223,12 @@ export default function Bancos() {
   const openNewProveedor = () => {
     setFormProveedor(EMPTY_PROVEEDOR)
     setEditProveedorId(null)
+    setSeccionBancaria(false)
+    setBancoOtro(false)
     setShowModalProveedor(true)
   }
 
-  const openEditProveedor = (p) => {
+  const openEditProveedor = (p, abrirBanco = false) => {
     setFormProveedor({
       nombre: p.nombre || '',
       rut: p.rut || '',
@@ -221,19 +239,95 @@ export default function Bancos() {
       email: p.email || '',
       contacto: p.contacto || '',
       activo: p.activo,
+      banco: p.banco || '',
+      banco_tipo_cuenta: p.banco_tipo_cuenta || '',
+      banco_numero_cuenta: p.banco_numero_cuenta || '',
+      banco_titular_nombre: p.banco_titular_nombre || '',
+      banco_titular_rut: p.banco_titular_rut || '',
+      banco_email: p.banco_email || '',
     })
     setEditProveedorId(p.id)
+    setSeccionBancaria(abrirBanco || tieneDatosBancarios(p))
+    setBancoOtro(!!p.banco && !BANCOS_PROVEEDOR.includes(p.banco))
     setShowModalProveedor(true)
+  }
+
+  // Abre la sección bancaria pre-llenando titular / RUT / email con los del proveedor;
+  // al cerrarla sin cuenta (sin banco/tipo/número) descarta lo pre-llenado
+  const toggleSeccionBancaria = () => {
+    if (!seccionBancaria) {
+      setFormProveedor(f => (
+        CAMPOS_BANCARIOS.some(c => (f[c] || '').trim())
+          ? f
+          : { ...f, banco_titular_nombre: f.nombre || '', banco_titular_rut: f.rut || '', banco_email: f.email || '' }
+      ))
+    } else {
+      setFormProveedor(f => (
+        (f.banco || '').trim() || (f.banco_tipo_cuenta || '').trim() || soloDigitos(f.banco_numero_cuenta)
+          ? f
+          : { ...f, ...EMPTY_BANCARIO }
+      ))
+      setBancoOtro(false)
+    }
+    setSeccionBancaria(!seccionBancaria)
+  }
+
+  const bloqueBancario = (p) => [
+    p.banco_titular_nombre, p.banco_titular_rut, p.banco,
+    p.banco_tipo_cuenta, p.banco_numero_cuenta, p.banco_email,
+  ].map(v => (v || '').toString().trim()).filter(Boolean).join('\n')
+
+  const copiarDatosBancarios = async (p) => {
+    try {
+      await navigator.clipboard.writeText(bloqueBancario(p))
+      showToast('Datos bancarios copiados al portapapeles')
+    } catch {
+      showToast('No se pudo copiar al portapapeles', 'error')
+    }
   }
 
   const handleSaveProveedor = async () => {
     if (!formProveedor.nombre.trim()) { showToast('El nombre es obligatorio', 'error'); return }
+
+    // Datos bancarios: todo o nada mínimo
+    const banco = (formProveedor.banco || '').trim()
+    const tipoCuenta = (formProveedor.banco_tipo_cuenta || '').trim()
+    const numeroCuenta = soloDigitos(formProveedor.banco_numero_cuenta)
+    const titular = (formProveedor.banco_titular_nombre || '').trim()
+    const titularRut = (formProveedor.banco_titular_rut || '').trim()
+    const emailBanco = (formProveedor.banco_email || '').trim()
+    const hayAlgoBancario = !!(banco || tipoCuenta || numeroCuenta || titular)
+
+    if (hayAlgoBancario) {
+      if (!banco || !tipoCuenta || !numeroCuenta || !titularRut) {
+        setSeccionBancaria(true)
+        showToast('Para guardar datos bancarios completa banco, tipo, número de cuenta y RUT del titular', 'error')
+        return
+      }
+      const rutTitular = validarRut(titularRut)
+      if (!rutTitular.valido) {
+        setSeccionBancaria(true)
+        showToast(`RUT del titular inválido — ${rutTitular.error}`, 'error')
+        return
+      }
+    }
+
+    const payload = {
+      ...formProveedor,
+      banco: hayAlgoBancario ? banco : null,
+      banco_tipo_cuenta: hayAlgoBancario ? tipoCuenta : null,
+      banco_numero_cuenta: hayAlgoBancario ? numeroCuenta : null,
+      banco_titular_nombre: hayAlgoBancario ? (titular || null) : null,
+      banco_titular_rut: hayAlgoBancario ? validarRut(titularRut).formateado : null,
+      banco_email: hayAlgoBancario ? (emailBanco || null) : null,
+    }
+
     setSavingProveedor(true)
     let error
     if (editProveedorId) {
-      ;({ error } = await supabase.from('proveedores').update(formProveedor).eq('id', editProveedorId))
+      ;({ error } = await supabase.from('proveedores').update(payload).eq('id', editProveedorId))
     } else {
-      ;({ error } = await supabase.from('proveedores').insert(formProveedor))
+      ;({ error } = await supabase.from('proveedores').insert(payload))
     }
     setSavingProveedor(false)
     if (error) showToast('Error al guardar', 'error')
@@ -665,9 +759,15 @@ export default function Bancos() {
                 <thead><tr><th>Nombre</th><th>RUT</th><th>Tipo</th><th>Giro</th><th>Contacto</th><th>Estado</th><th>Acciones</th></tr></thead>
                 <tbody>
                   {proveedoresFiltrados.map(p => (
-                    <tr key={p.id}>
+                    <Fragment key={p.id}>
+                    <tr>
                       <td style={{ color: p.activo ? '#c8d0dc' : 'var(--text-dim)' }}>
-                        <div>{p.nombre}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {p.nombre}
+                          {tieneDatosBancarios(p) && (
+                            <i className="ti ti-building-bank" title="Tiene datos bancarios" style={{ fontSize: 13, color: '#5dcaa5' }}></i>
+                          )}
+                        </div>
                         {p.email && <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>{p.email}</div>}
                       </td>
                       <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{p.rut || '—'}</td>
@@ -690,6 +790,13 @@ export default function Bancos() {
                       <td>{p.activo ? <span className="badge badge-active">Activo</span> : <span className="badge badge-inactive">Inactivo</span>}</td>
                       <td>
                         <div style={{ display: 'flex', gap: 4 }}>
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => setProveedorExpandido(id => id === p.id ? null : p.id)}
+                            title={proveedorExpandido === p.id ? 'Ocultar datos bancarios' : 'Ver datos bancarios'}
+                          >
+                            <i className={`ti ${proveedorExpandido === p.id ? 'ti-chevron-up' : 'ti-chevron-down'}`}></i>
+                          </button>
                           <button className="btn btn-sm" onClick={() => openEditProveedor(p)} title="Editar"><i className="ti ti-edit"></i></button>
                           <button className="btn btn-sm" onClick={() => handleToggleProveedor(p.id, p.activo)} title={p.activo ? 'Desactivar' : 'Activar'}>
                             <i className={`ti ${p.activo ? 'ti-eye-off' : 'ti-eye'}`}></i>
@@ -698,6 +805,44 @@ export default function Bancos() {
                         </div>
                       </td>
                     </tr>
+                    {proveedorExpandido === p.id && (
+                      <tr>
+                        <td colSpan={7} style={{ background: 'var(--navy-mid)' }}>
+                          {tieneDatosBancarios(p) ? (
+                            <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap', padding: '4px 0' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(150px, 1fr))', gap: '10px 24px', fontFamily: 'sans-serif', flex: 1 }}>
+                                {[
+                                  ['Titular', p.banco_titular_nombre],
+                                  ['RUT titular', p.banco_titular_rut],
+                                  ['Banco', p.banco],
+                                  ['Tipo de cuenta', p.banco_tipo_cuenta],
+                                  ['N° de cuenta', p.banco_numero_cuenta],
+                                  ['Email comprobantes', p.banco_email],
+                                ].map(([label, valor]) => (
+                                  <div key={label}>
+                                    <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text-dim)', marginBottom: 3 }}>{label}</div>
+                                    <div style={{ fontSize: 12, color: '#c8d0dc' }}>{valor || '—'}</div>
+                                  </div>
+                                ))}
+                              </div>
+                              <button className="btn btn-sm" onClick={() => copiarDatosBancarios(p)} title="Copiar el bloque listo para pegar en el banco">
+                                <i className="ti ti-copy"></i> Copiar datos
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', gap: 10, alignItems: 'center', color: 'var(--text-dim)', fontSize: 12, fontFamily: 'sans-serif', padding: '4px 0' }}>
+                              <i className="ti ti-building-bank"></i> Sin datos bancarios
+                              {editable && (
+                                <button className="btn btn-sm" onClick={() => openEditProveedor(p, true)}>
+                                  <i className="ti ti-plus"></i> Agregar datos bancarios
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -744,6 +889,73 @@ export default function Bancos() {
                     <input placeholder="Nombre del contacto" value={formProveedor.contacto} onChange={e => setFormProveedor(f => ({ ...f, contacto: e.target.value }))} />
                   </div>
                 </div>
+
+                <div style={{ borderTop: '0.5px solid var(--border)', marginTop: 16, paddingTop: 12 }}>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+                    onClick={toggleSeccionBancaria}
+                  >
+                    <span><i className="ti ti-building-bank"></i> Datos bancarios (opcional)</span>
+                    <i className={`ti ${seccionBancaria ? 'ti-chevron-up' : 'ti-chevron-down'}`}></i>
+                  </button>
+
+                  {seccionBancaria && (
+                    <div className="form-grid" style={{ marginTop: 12 }}>
+                      <div className="form-group"><label>Banco</label>
+                        <select
+                          value={bancoOtro ? 'Otro' : (formProveedor.banco || '')}
+                          onChange={e => {
+                            const val = e.target.value
+                            if (val === 'Otro') { setBancoOtro(true); setFormProveedor(f => ({ ...f, banco: '' })) }
+                            else { setBancoOtro(false); setFormProveedor(f => ({ ...f, banco: val })) }
+                          }}
+                        >
+                          <option value="">Selecciona un banco…</option>
+                          {BANCOS_PROVEEDOR.map(b => <option key={b} value={b}>{b}</option>)}
+                          <option value="Otro">Otro</option>
+                        </select>
+                      </div>
+                      <div className="form-group"><label>Tipo de cuenta</label>
+                        <select value={formProveedor.banco_tipo_cuenta || ''} onChange={e => setFormProveedor(f => ({ ...f, banco_tipo_cuenta: e.target.value }))}>
+                          <option value="">Selecciona…</option>
+                          {TIPOS_CUENTA_PROVEEDOR.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                      {bancoOtro && (
+                        <div className="form-group full"><label>Nombre del banco</label>
+                          <input placeholder="Ej: Banco Consorcio" value={formProveedor.banco} onChange={e => setFormProveedor(f => ({ ...f, banco: e.target.value }))} />
+                        </div>
+                      )}
+                      <div className="form-group full"><label>Número de cuenta</label>
+                        <input
+                          inputMode="numeric"
+                          placeholder="Solo dígitos — ej: 12345678"
+                          value={formProveedor.banco_numero_cuenta || ''}
+                          onChange={e => setFormProveedor(f => ({ ...f, banco_numero_cuenta: e.target.value.replace(/[^\d.\-\s]/g, '') }))}
+                        />
+                      </div>
+                      <div className="form-group"><label>Titular</label>
+                        <input placeholder="Nombre del titular de la cuenta" value={formProveedor.banco_titular_nombre || ''} onChange={e => setFormProveedor(f => ({ ...f, banco_titular_nombre: e.target.value }))} />
+                      </div>
+                      <div className="form-group"><label>RUT del titular</label>
+                        <RutInput
+                          value={formProveedor.banco_titular_rut || ''}
+                          onChange={val => setFormProveedor(f => ({ ...f, banco_titular_rut: val }))}
+                          onValidChange={(valido, formateado) => { if (valido) setFormProveedor(f => ({ ...f, banco_titular_rut: formateado })) }}
+                        />
+                      </div>
+                      <div className="form-group full"><label>Email para comprobantes</label>
+                        <input type="email" placeholder="pagos@proveedor.cl" value={formProveedor.banco_email || ''} onChange={e => setFormProveedor(f => ({ ...f, banco_email: e.target.value }))} />
+                      </div>
+                      <div className="form-group full" style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                        Opcional. Si completas alguno, banco, tipo, número de cuenta y RUT del titular pasan a ser obligatorios.
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="modal-footer">
                   <button className="btn" onClick={() => setShowModalProveedor(false)}>Cancelar</button>
                   <button className="btn btn-primary" onClick={handleSaveProveedor} disabled={savingProveedor}>
