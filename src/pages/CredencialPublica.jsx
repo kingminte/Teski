@@ -1,20 +1,19 @@
 import { useEffect, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import logo from '../assets/logo.png'
 import { anioVigente, beneficiariosActivos, nombreCompleto, fechaHoraConsulta } from '../lib/credencial'
 
-// Tratamiento visual por estado, en tonos claros para la ficha pública.
-const ESTADO_PUB = {
-  activo:    { label: 'SOCIO ACTIVO',    icon: 'ti-circle-check',  color: '#1D9E75', bg: '#e7f6ef', border: '#bfe6d5' },
-  pendiente: { label: 'SOCIO PENDIENTE', icon: 'ti-alert-triangle', color: '#BA7517', bg: '#fbf2e3', border: '#eed9b4' },
-  inactivo:  { label: 'SOCIO INACTIVO',  icon: 'ti-ban',           color: '#C62F2F', bg: '#fbe8e8', border: '#eec2c2' },
-}
-
 const FONDO = { minHeight: '100vh', background: '#f3f5f8', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '32px 16px', fontFamily: 'system-ui, sans-serif', boxSizing: 'border-box' }
 
+// Verificación pública del QR. El token es estable (socios.credencial_token):
+// lo que se valida EN VIVO al escanear es el estado ACTUAL del socio, no la
+// frescura del código. Nunca expone RUT ni datos de contacto.
 export default function CredencialPublica() {
-  const { token } = useParams()
+  const [params] = useSearchParams()
+  const { token: tokenLegacy } = useParams()   // ruta antigua /credencial/:token
+  const token = params.get('t') || tokenLegacy || ''
+
   const [socio, setSocio] = useState(null)
   const [loading, setLoading] = useState(true)
 
@@ -22,14 +21,11 @@ export default function CredencialPublica() {
     let cancel = false
     ;(async () => {
       setLoading(true)
-      // Validar el token efímero: la RPC devuelve socio_id si está vigente, null si venció.
-      const { data: socioId } = await supabase.rpc('validar_token_credencial', { p_token: token })
-      if (cancel) return
-      if (!socioId) { setSocio(null); setLoading(false); return }
-      // Token vigente → traer datos del socio (solo columnas NO sensibles).
+      if (!token) { setSocio(null); setLoading(false); return }
+      // Solo columnas NO sensibles: sin RUT, sin email, sin teléfono.
       const { data } = await supabase.from('socios')
         .select('numero_socio,nombre,apellido,estado,beneficiarios(nombre,apellido,estado)')
-        .eq('id', socioId)
+        .eq('credencial_token', token)
         .maybeSingle()
       if (!cancel) { setSocio(data || null); setLoading(false) }
     })()
@@ -40,23 +36,27 @@ export default function CredencialPublica() {
     return <div style={FONDO}><div style={{ color: '#64748b', marginTop: 80 }}>Verificando credencial…</div></div>
   }
 
-  // Token vencido o inexistente → ficha informativa (mismo estilo limpio).
+  // Token inexistente o regenerado → aviso neutro, sin datos del socio.
   if (!socio) {
     return (
       <div style={FONDO}>
         <div style={{ background: '#fff', borderRadius: 16, boxShadow: '0 6px 24px rgba(0,0,0,0.08)', padding: '40px 28px', maxWidth: 380, width: '100%', textAlign: 'center', marginTop: 40 }}>
-          <i className="ti ti-circle-x" style={{ fontSize: 48, color: '#C62F2F' }}></i>
-          <h1 style={{ fontSize: 20, color: '#1e293b', margin: '16px 0 8px' }}>Credencial vencida</h1>
+          <i className="ti ti-help-circle" style={{ fontSize: 48, color: '#94a3b8' }}></i>
+          <h1 style={{ fontSize: 20, color: '#1e293b', margin: '16px 0 8px' }}>Credencial no válida</h1>
           <p style={{ fontSize: 13.5, color: '#64748b', lineHeight: 1.5, margin: 0 }}>
-            Esta credencial está vencida. Pídale al socio que muestre la credencial actualizada.
+            Este código no corresponde a ninguna credencial vigente del club.
+            Pídale al socio que muestre su credencial actual.
           </p>
         </div>
       </div>
     )
   }
 
-  const meta = ESTADO_PUB[socio.estado] || ESTADO_PUB.pendiente
-  const benes = beneficiariosActivos(socio.beneficiarios)
+  const vigente = socio.estado === 'activo'
+  const meta = vigente
+    ? { label: 'CREDENCIAL VIGENTE', icon: 'ti-circle-check', color: '#1D9E75', bg: '#e7f6ef', border: '#bfe6d5' }
+    : { label: 'CREDENCIAL NO VIGENTE', icon: 'ti-ban', color: '#C62F2F', bg: '#fbe8e8', border: '#eec2c2' }
+  const benes = vigente ? beneficiariosActivos(socio.beneficiarios) : []
 
   return (
     <div style={FONDO}>
@@ -78,13 +78,15 @@ export default function CredencialPublica() {
             {meta.label}
           </div>
 
-          {/* Año vigente */}
-          <div style={{ textAlign: 'center', margin: '14px 0 18px' }}>
-            <span style={{ fontSize: 11, color: '#94a3b8', letterSpacing: 2 }}>VIGENCIA</span>
-            <div style={{ fontSize: 26, fontWeight: 800, color: '#1e293b', lineHeight: 1 }}>{anioVigente()}</div>
-          </div>
+          {/* Año vigente — solo tiene sentido si la credencial vale */}
+          {vigente && (
+            <div style={{ textAlign: 'center', margin: '14px 0 18px' }}>
+              <span style={{ fontSize: 11, color: '#94a3b8', letterSpacing: 2 }}>VIGENCIA</span>
+              <div style={{ fontSize: 26, fontWeight: 800, color: '#1e293b', lineHeight: 1 }}>{anioVigente()}</div>
+            </div>
+          )}
 
-          {/* Datos */}
+          {/* Datos mínimos: nombre y N° de socio. Nunca RUT ni contacto. */}
           <Campo label="Titular" valor={nombreCompleto(socio)} />
           <Campo label="N° de socio" valor={socio.numero_socio} />
 
@@ -98,6 +100,12 @@ export default function CredencialPublica() {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {!vigente && (
+            <div style={{ marginTop: 16, background: '#fbe8e8', border: '1px solid #eec2c2', borderRadius: 10, padding: '10px 12px', fontSize: 12.5, color: '#8f2626', lineHeight: 1.5 }}>
+              Este socio no se encuentra activo. La credencial no habilita el acceso.
             </div>
           )}
 

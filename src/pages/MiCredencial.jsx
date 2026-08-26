@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/useAuth'
 import { useToast } from '../lib/useToast.jsx'
 import CredencialCard from '../components/CredencialCard'
-import { urlPublica, obtenerTokenEstable } from '../lib/credencial'
+import { urlPublica } from '../lib/credencial'
 
 export default function MiCredencial() {
   const { user } = useAuth()
@@ -14,7 +14,6 @@ export default function MiCredencial() {
 
   const [socio, setSocio] = useState(null)
   const [beneficiarios, setBeneficiarios] = useState([])
-  const [token, setToken] = useState(null)
   const [loading, setLoading] = useState(true)
   const [bajando, setBajando] = useState(false)
   const cardRef = useRef(null)
@@ -23,18 +22,17 @@ export default function MiCredencial() {
 
   const load = async () => {
     setLoading(true)
-    // Token ESTABLE por socio (get-or-create): el QR es fijo y compartible.
-    const [{ data: soc }, { data: benes }, tk] = await Promise.all([
+    // El QR sale de socios.credencial_token: estable y compartible, el mismo
+    // que ve el admin en "Credenciales de socios".
+    const [{ data: soc }, { data: benes }] = await Promise.all([
       supabase.from('socios')
-        .select('id,numero_socio,nombre,apellido,estado')
+        .select('id,numero_socio,nombre,apellido,estado,credencial_token')
         .eq('id', miSocioId).maybeSingle(),
       supabase.from('beneficiarios')
         .select('nombre,apellido,estado').eq('socio_id', miSocioId),
-      obtenerTokenEstable(miSocioId),
     ])
     setSocio(soc || null)
     setBeneficiarios(benes || [])
-    setToken(tk || null)
     setLoading(false)
   }
 
@@ -55,7 +53,7 @@ export default function MiCredencial() {
   }
 
   const compartir = async () => {
-    const url = urlPublica(token)
+    const url = urlPublica(socio?.credencial_token)
     if (navigator.share) {
       try { await navigator.share({ title: 'Mi Credencial — Teski Club', url }) } catch { /* cancelado */ }
     } else {
@@ -81,7 +79,7 @@ export default function MiCredencial() {
     return <div className="card"><div className="empty-state"><i className="ti ti-alert-triangle"></i>No se encontró el socio asociado a tu usuario.</div></div>
   }
 
-  const url = urlPublica(token)
+  const url = urlPublica(socio.credencial_token)
 
   return (
     <div style={{ maxWidth: 520, margin: '0 auto' }}>
@@ -89,7 +87,7 @@ export default function MiCredencial() {
       <div style={{ marginBottom: 18 }}>
         <h2 style={{ margin: 0, color: 'var(--gold-light)', fontSize: 20 }}>Mi Credencial</h2>
         <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
-          Credencial digital del socio. Validable por QR.
+          Muestra o guarda un pantallazo — el QR es válido por la temporada.
         </div>
       </div>
 
@@ -105,7 +103,8 @@ export default function MiCredencial() {
       </div>
 
       <div style={{ marginTop: 18, fontSize: 11.5, color: 'var(--text-dim)', lineHeight: 1.5 }}>
-        Esta credencial es validable escaneando el código QR o ingresando a{' '}
+        Al escanear el QR se verifica en línea tu estado actual de socio.
+        También es validable ingresando a{' '}
         <span style={{ color: 'var(--text-muted)', wordBreak: 'break-all' }}>{url}</span>
       </div>
     </div>

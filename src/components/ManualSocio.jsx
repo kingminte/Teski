@@ -64,9 +64,10 @@ export default function ManualSocio() {
       </Seccion>
 
       <Seccion id="mi-credencial" icon="ti-id" titulo="2. Mi credencial virtual">
-        <p>En el menú, entra a <strong>Mi credencial</strong>. Vas a ver tu credencial con un código QR que se renueva cada 60 segundos (hay una barra que muestra cuánto falta para que cambie).</p>
-        <p>Cuando un tercero (un restaurante con convenio, por ejemplo) escanea el QR, ve una página con tu nombre, tu número de socio y tu estado, válida solo en ese momento.</p>
-        <Atencion>El QR cambia solo cada 60 segundos: por eso no sirve sacarle una captura ni reenviar el enlace, porque vence enseguida. Es la protección de la credencial. Si no tienes señal, la tarjeta se muestra sin QR y dice “Sin señal para emitir QR”; reconéctate y vuelve a entrar.</Atencion>
+        <p>En el menú, entra a <strong>Mi credencial</strong>. Vas a ver tu credencial con tu código QR, que es fijo y vale por toda la temporada.</p>
+        <p>Cuando un tercero (el centro de esquí o un restaurante con convenio) escanea el QR, se abre una página que consulta el sistema en ese momento y muestra tu nombre, tu número de socio, tu estado y tus beneficiarios.</p>
+        <Tip>Como el QR no cambia, puedes sacarle una captura de pantalla y mostrarla en el cerro aunque no tengas señal. Quien valida sí necesita internet: la página siempre lee tu estado actual, no la foto.</Tip>
+        <Atencion>Si dejas de estar activo, esa misma captura pasa a mostrar “Credencial no vigente”. Y si pides al club que te regeneren el QR (por ejemplo, si lo compartiste con quien no debías), las capturas anteriores dejan de funcionar: guarda una nueva.</Atencion>
       </Seccion>
 
       <Seccion id="cuotas" icon="ti-receipt" titulo="3. Mis cuotas y estado de pagos">

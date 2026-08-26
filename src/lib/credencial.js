@@ -10,8 +10,11 @@ export const anioVigente = () => new Date().getFullYear()
 
 // URL pública validable por QR. Usa el origin actual para que funcione
 // igual en dev, preview y producción.
+// El token es ESTABLE por socio (socios.credencial_token): el QR vale toda
+// la temporada y sirve como pantallazo. La seguridad no está en la rotación
+// sino en que /credencial-publica consulta el estado ACTUAL del socio.
 export const urlPublica = (token) =>
-  token ? `${window.location.origin}/credencial/${token}` : ''
+  token ? `${window.location.origin}/credencial-publica?t=${token}` : ''
 
 // Solo beneficiarios vigentes (la tabla usa estado 'vigente' | 'inactivo').
 export const beneficiariosActivos = (lista) =>
@@ -21,25 +24,17 @@ export const beneficiariosActivos = (lista) =>
 export const nombreCompleto = (p) =>
   p ? `${p.nombre || ''} ${p.apellido || ''}`.trim() : ''
 
-// Crea un token efímero (60s) para el socio vía RPC. Devuelve
-// { token, expires_at } o null si falla (ej. sin conexión).
-// Lo usa el QR rotativo del panel admin (Credenciales.jsx).
-export const crearTokenEfimero = async (socioId) => {
+// Regenera el token del socio: el QR anterior (y sus pantallazos) dejan de
+// validar. El uuid se genera en el cliente porque PostgREST no permite
+// llamar gen_random_uuid() dentro de un UPDATE.
+// Devuelve el nuevo token, o null si falló.
+export const regenerarCredencialToken = async (socioId) => {
   if (!socioId) return null
-  const { data, error } = await supabase.rpc('crear_token_credencial', { p_socio_id: socioId })
-  if (error || !data) return null
-  const row = Array.isArray(data) ? data[0] : data
-  return row ? { token: row.token, expires_at: row.expires_at } : null
-}
-
-// Obtiene el token ESTABLE (no expira) del socio vía RPC get-or-create.
-// Es el que usa "Mi Credencial": el QR es fijo y compartible. Devuelve
-// el token (string) o null si falla (ej. sin conexión).
-export const obtenerTokenEstable = async (socioId) => {
-  if (!socioId) return null
-  const { data, error } = await supabase.rpc('obtener_token_credencial', { p_socio_id: socioId })
-  if (error || !data) return null
-  return typeof data === 'string' ? data : (data.token || null)
+  const nuevo = crypto.randomUUID()
+  const { error } = await supabase.from('socios')
+    .update({ credencial_token: nuevo })
+    .eq('id', socioId)
+  return error ? null : nuevo
 }
 
 // Fecha + hora de consulta, legible (es-CL). Para el pie de verificación.

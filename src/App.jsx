@@ -66,9 +66,15 @@ export default function App() {
 
   // Ruta pública sin auth: credencial validable por QR. Va ANTES del gate
   // de login (después de los hooks, por las reglas de hooks).
-  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/credencial/')) {
+  // /credencial-publica?t={credencial_token} es la URL actual del QR;
+  // /credencial/:token queda solo para pantallazos del esquema anterior.
+  if (typeof window !== 'undefined' && (
+    window.location.pathname === '/credencial-publica' ||
+    window.location.pathname.startsWith('/credencial/')
+  )) {
     return (
       <Routes>
+        <Route path="/credencial-publica" element={<CredencialPublica />} />
         <Route path="/credencial/:token" element={<CredencialPublica />} />
       </Routes>
     )

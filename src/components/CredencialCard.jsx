@@ -28,7 +28,8 @@ const ESTADO_CRED = {
 
 // Credencial visual reutilizable (estilo tarjeta plástica, aspect-ratio 1.59).
 // Usada por "Mi credencial" y "Credenciales de socios". Genera su propio QR
-// a partir de `url`. forwardRef expone el nodo para exportarlo a imagen.
+// a partir de `url`, que apunta a la verificación pública con el token
+// estable del socio. forwardRef expone el nodo para exportarlo a imagen.
 const CredencialCard = forwardRef(function CredencialCard({ socio, beneficiarios, url }, ref) {
   const [qr, setQr] = useState('')
 
@@ -122,7 +123,7 @@ const CredencialCard = forwardRef(function CredencialCard({ socio, beneficiarios
             </div>
             {url
               ? <div style={{ fontSize: 11, fontWeight: 700, marginTop: 5, letterSpacing: 0.5 }}>N° {socio.numero_socio}</div>
-              : <div style={{ fontSize: 8, opacity: 0.9, marginTop: 5, lineHeight: 1.2 }}>Sin señal para emitir QR</div>}
+              : <div style={{ fontSize: 8, opacity: 0.9, marginTop: 5, lineHeight: 1.2 }}>QR no disponible</div>}
           </div>
         </div>
       </div>

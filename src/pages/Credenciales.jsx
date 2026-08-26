@@ -1,28 +1,27 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../lib/useAuth'
 import { useToast } from '../lib/useToast.jsx'
 import CredencialCard from '../components/CredencialCard'
-import { urlPublica } from '../lib/credencial'
-import { useCredencialToken } from '../lib/useCredencialToken'
+import { urlPublica, regenerarCredencialToken } from '../lib/credencial'
 
 export default function Credenciales() {
-  const { ToastComponent } = useToast()
+  const { showToast, ToastComponent } = useToast()
+  const { esAdmin } = useAuth()
 
   const [socios, setSocios] = useState([])
   const [busqueda, setBusqueda] = useState('')
   const [sel, setSel] = useState(null)            // socio seleccionado
   const [beneficiarios, setBeneficiarios] = useState([])
   const [loading, setLoading] = useState(true)
-
-  // Token efímero del socio seleccionado (rota cada 60s mientras esté abierto).
-  const { token, segundos, total, sinConexion } = useCredencialToken(sel?.id, !!sel)
+  const [regenerando, setRegenerando] = useState(false)
 
   useEffect(() => { load() }, [])
 
   const load = async () => {
     setLoading(true)
     const { data } = await supabase.from('socios')
-      .select('id,numero_socio,nombre,apellido,rut,estado')
+      .select('id,numero_socio,nombre,apellido,rut,estado,credencial_token')
       .order('apellido')
     setSocios(data || [])
     setLoading(false)
@@ -46,8 +45,20 @@ export default function Credenciales() {
     setBeneficiarios(data || [])
   }
 
-  const url = urlPublica(token)
-  const pct = Math.round((segundos / total) * 100)
+  // Regenera el token estable: los pantallazos del QR anterior dejan de validar.
+  const regenerar = async () => {
+    if (!sel) return
+    if (!confirm('¿Regenerar el QR de este socio? El QR anterior y sus pantallazos dejarán de funcionar.')) return
+    setRegenerando(true)
+    const nuevo = await regenerarCredencialToken(sel.id)
+    setRegenerando(false)
+    if (!nuevo) { showToast('No se pudo regenerar el QR', 'error'); return }
+    setSel(s => ({ ...s, credencial_token: nuevo }))
+    setSocios(list => list.map(s => s.id === sel.id ? { ...s, credencial_token: nuevo } : s))
+    showToast('QR regenerado — el anterior dejó de ser válido')
+  }
+
+  const url = urlPublica(sel?.credencial_token)
 
   return (
     <div>
@@ -55,7 +66,7 @@ export default function Credenciales() {
       <div style={{ marginBottom: 18 }}>
         <h2 style={{ margin: 0, color: 'var(--gold-light)', fontSize: 20 }}>Credenciales de socios</h2>
         <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
-          Busca un socio para ver su credencial. El QR se renueva cada 60 segundos.
+          Busca un socio para ver su credencial. Muestra o guarda un pantallazo — el QR es válido por la temporada.
         </div>
       </div>
 
@@ -100,21 +111,14 @@ export default function Credenciales() {
           ) : (
             <>
               <CredencialCard socio={sel} beneficiarios={beneficiarios} url={url} />
-              <div style={{ marginTop: 14 }}>
-                {sinConexion ? (
-                  <div style={{ fontSize: 12, color: '#fac775', fontFamily: 'sans-serif', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <i className="ti ti-wifi-off"></i> Sin conexión — no se pudo emitir el QR.
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginBottom: 5 }}>
-                      <span>Código de verificación</span>
-                      <span>Se renueva en {segundos}s</span>
-                    </div>
-                    <div style={{ height: 6, background: 'rgba(201,168,76,0.15)', borderRadius: 3, overflow: 'hidden' }}>
-                      <div style={{ width: `${pct}%`, height: '100%', background: 'var(--gold)', borderRadius: 3, transition: 'width 1s linear' }}></div>
-                    </div>
-                  </>
+              <div style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 11.5, color: 'var(--text-dim)', fontFamily: 'sans-serif', lineHeight: 1.5 }}>
+                  El QR se valida en línea contra el estado actual del socio.
+                </div>
+                {esAdmin() && (
+                  <button className="btn btn-sm" onClick={regenerar} disabled={regenerando} title="Invalida el QR anterior y sus pantallazos">
+                    <i className="ti ti-refresh"></i> {regenerando ? 'Regenerando…' : 'Regenerar QR'}
+                  </button>
                 )}
               </div>
             </>

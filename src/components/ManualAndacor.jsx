@@ -116,12 +116,13 @@ export default function ManualAndacor() {
         <p>Cuando el socio llega a clase, te muestra el QR de su credencial en su celular.</p>
         <Pasos>
           <li>Escanea el QR con la cámara de tu teléfono (o una app de escaneo).</li>
-          <li>Se abre una página pública con el nombre del socio, sus beneficiarios, el estado y el año de vigencia.</li>
-          <li>Si dice <strong style={{ color: '#1D9E75' }}>“Socio activo”</strong> (verde), puedes dar la clase.</li>
-          <li>Si dice <strong style={{ color: '#BA7517' }}>“Socio pendiente”</strong> (ámbar) o <strong style={{ color: '#C62F2F' }}>“Socio inactivo”</strong> (rojo), no debería tomar clase: avísale al tesorero del club.</li>
+          <li>Se abre una página pública que consulta el sistema en ese momento y muestra el estado del socio.</li>
+          <li>Si dice <strong style={{ color: '#1D9E75' }}>“Credencial vigente”</strong> (verde), puedes dar la clase. Ahí ves el nombre, el número de socio, el año de vigencia y los beneficiarios.</li>
+          <li>Si dice <strong style={{ color: '#C62F2F' }}>“Credencial no vigente”</strong> (rojo), no debería tomar clase: avísale al tesorero del club.</li>
+          <li>Si dice <strong>“Credencial no válida”</strong>, ese código ya no corresponde a ninguna credencial del club (por ejemplo, un QR antiguo que fue reemplazado). Pídele la credencial actual.</li>
         </Pasos>
-        <p>El QR se renueva cada 60 segundos por seguridad. Si te muestran una captura de pantalla vieja, vas a ver <strong>“Credencial vencida”</strong>.</p>
-        <Tip>Si el socio no puede mostrar el QR por falta de conexión, contacta al tesorero antes de dar la clase.</Tip>
+        <p>El QR del socio es fijo y vale por la temporada, así que una captura de pantalla sirve igual: lo que se valida es el estado del socio al momento de escanear, no la frescura del código. Por eso <strong>quien escanea sí necesita internet</strong>.</p>
+        <Tip>Si no tienes señal para abrir la página, contacta al tesorero antes de dar la clase: la captura por sí sola no acredita nada.</Tip>
       </Seccion>
 
       <Seccion id="contacto" icon="ti-mail" titulo="Contacto">
