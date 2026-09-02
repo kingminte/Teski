@@ -23,6 +23,29 @@ const mesAnterior = (mesStr) => {
   return { anio: a, mes: m - 1 }
 }
 
+// Clave de agrupación de conceptos, insensible a mayúsculas y tildes:
+// "Incorporación" e "incorporacion" son la misma categoría, no dos líneas.
+// (El RPC de calce escribía el concepto crudo del cheque; ver
+// 20260902_calce_cheque_concepto_etiqueta.sql. Esto además cubre lo ya escrito.)
+// ̀-ͯ = marcas diacríticas combinantes que deja NFD al descomponer.
+const DIACRITICOS = /[̀-ͯ]/g
+const normConcepto = (s) => (s || '')
+  .toLowerCase()
+  .normalize('NFD').replace(DIACRITICOS, '')
+  .trim()
+
+// Entre variantes del mismo concepto gana la mejor escrita: primero la que
+// conserva tildes, luego la que parte en mayúscula. Así la etiqueta visible
+// es "Incorporación" aunque la primera fila vista haya sido "incorporacion".
+const puntajeEtiqueta = (s) => {
+  const t = (s || '').trim()
+  if (!t) return -1
+  let p = 0
+  if (/[̀-ͯ]/.test(t.normalize('NFD'))) p += 2
+  if (t[0] !== t[0].toLowerCase()) p += 1
+  return p
+}
+
 export default function ReporteFinanciero() {
   const { showToast, ToastComponent } = useToast()
   const hoy = new Date()
@@ -89,16 +112,27 @@ export default function ReporteFinanciero() {
       let saldoCtaCte = cartolaFin?.saldo_final ?? null
       let saldoCtaCteCalculado = false
 
-      // Ingresos
-      const cuotasSociales = pagos.filter(p => !p.concepto || p.concepto.toLowerCase().includes('cuota'))
-      const inscripciones = pagos.filter(p => p.concepto && p.concepto.toLowerCase().includes('incorpora'))
-      const otrosPagos = pagos.filter(p => p.concepto && !p.concepto.toLowerCase().includes('cuota') && !p.concepto.toLowerCase().includes('incorpora'))
+      // Ingresos — los filtros son excluyentes: un pago cae en Cuotas sociales
+      // o en una categoría dinámica, nunca en las dos. "Cuota de incorporación"
+      // contiene 'cuota' pero es una incorporación, así que va a la dinámica.
+      const cuotasSociales = pagos.filter(p => {
+        const c = normConcepto(p.concepto)
+        return (!c || c.includes('cuota')) && !c.includes('incorpora')
+      })
+      const idsCuotas = new Set(cuotasSociales.map(p => p.id))
+      // Todo lo que no es cuota social se agrupa por su propio concepto: las
+      // incorporaciones ya no tienen línea fija propia, se suman a la categoría
+      // "Incorporación" junto a las que vienen de otros_ingresos.
+      const otrosPagos = pagos.filter(p => !idsCuotas.has(p.id))
 
       const otrosIngAgrupados = {}
-      const addOtro = (key, item, monto) => {
-        if (!otrosIngAgrupados[key]) otrosIngAgrupados[key] = { concepto: key, items: [], total: 0 }
-        otrosIngAgrupados[key].items.push(item)
-        otrosIngAgrupados[key].total += monto
+      const addOtro = (etiqueta, item, monto) => {
+        const key = normConcepto(etiqueta)
+        if (!otrosIngAgrupados[key]) otrosIngAgrupados[key] = { concepto: etiqueta, items: [], total: 0 }
+        const g = otrosIngAgrupados[key]
+        if (puntajeEtiqueta(etiqueta) > puntajeEtiqueta(g.concepto)) g.concepto = etiqueta
+        g.items.push(item)
+        g.total += monto
       }
       otrosIng.forEach(o => addOtro(o.concepto || 'Otros ingresos',
         { fecha: o.fecha, descripcion: o.descripcion || '', concepto: o.concepto, monto: o.monto }, o.monto))
@@ -106,16 +140,18 @@ export default function ReporteFinanciero() {
         { fecha: p.fecha_pago, descripcion: p.socios ? `${p.socios.nombre} ${p.socios.apellido} (${p.socios.numero_socio})` : 'Socio', concepto: p.concepto, monto: p.monto }, p.monto))
 
       const totalCuotas = cuotasSociales.reduce((t, p) => t + p.monto, 0)
-      const totalInscripciones = inscripciones.reduce((t, p) => t + p.monto, 0)
       const totalOtrosIng = Object.values(otrosIngAgrupados).reduce((t, g) => t + g.total, 0)
-      const totalPeriodoIng = totalCuotas + totalInscripciones + totalOtrosIng
+      const totalPeriodoIng = totalCuotas + totalOtrosIng
 
       // Egresos
       const egresosAgrupados = {}
-      const addEgreso = (cat, item, monto) => {
-        if (!egresosAgrupados[cat]) egresosAgrupados[cat] = { concepto: cat, items: [], total: 0 }
-        egresosAgrupados[cat].items.push(item)
-        egresosAgrupados[cat].total += monto
+      const addEgreso = (etiqueta, item, monto) => {
+        const key = normConcepto(etiqueta)
+        if (!egresosAgrupados[key]) egresosAgrupados[key] = { concepto: etiqueta, items: [], total: 0 }
+        const g = egresosAgrupados[key]
+        if (puntajeEtiqueta(etiqueta) > puntajeEtiqueta(g.concepto)) g.concepto = etiqueta
+        g.items.push(item)
+        g.total += monto
       }
       movimientos.forEach(m => {
         const cat = m.chequera_detalle?.concepto || 'Otros gastos'
@@ -129,7 +165,11 @@ export default function ReporteFinanciero() {
         }, monto)
       })
       pagosCP.forEach(p => {
-        if (p.chequera_detalle_id) return // ya contado vía movimiento
+        // Ya contado vía el movimiento de cartola: por cheque (chequera_detalle_id)
+        // o por vínculo directo del pago con el movimiento (movimiento_id, que usan
+        // los giros por caja en efectivo y las transferencias). Sin la segunda
+        // condición el egreso se sumaba dos veces.
+        if (p.chequera_detalle_id || p.movimiento_id) return
         const cat = p.cuentas_por_pagar?.categoria || p.cuentas_por_pagar?.concepto || 'Otros gastos'
         addEgreso(cat, {
           fecha: p.fecha_pago,
@@ -150,8 +190,8 @@ export default function ReporteFinanciero() {
 
       setDatos({
         rango: { fechaDesde, fechaHasta, fechaInicio, fechaFin, aD, mD, aH, mH, ultimoDia },
-        cuotasSociales, inscripciones, otrosIngAgrupados,
-        totalCuotas, totalInscripciones, totalOtrosIng, totalPeriodoIng,
+        cuotasSociales, otrosIngAgrupados,
+        totalCuotas, totalOtrosIng, totalPeriodoIng,
         egresosAgrupados, totalEgresos,
         saldoAnterior, saldoCtaCte,
         saldoAnteriorCalculado, saldoCtaCteCalculado,
@@ -179,14 +219,6 @@ export default function ReporteFinanciero() {
         p.concepto || 'Cuota social',
         p.monto,
         'Cuotas sociales',
-      ]))
-      datos.inscripciones.forEach(p => ingresosRows.push([
-        p.fecha_pago ? p.fecha_pago.split('-').reverse().join('/') : '',
-        p.socios ? `${p.socios.nombre} ${p.socios.apellido}` : '',
-        p.socios?.numero_socio || '',
-        p.concepto || 'Incorporación',
-        p.monto,
-        'Inscripciones',
       ]))
       Object.values(datos.otrosIngAgrupados).forEach(g => {
         g.items.forEach(it => ingresosRows.push([
@@ -350,22 +382,16 @@ export default function ReporteFinanciero() {
                   <i className="ti ti-trending-up"></i> Ingresos
                 </div>
               </div>
-              {renderFila('ing-cuotas', 'Cuotas sociales', datos.totalCuotas,
+              {/* Solo categorías con movimiento: una línea en $0 es ruido. */}
+              {datos.totalCuotas !== 0 && renderFila('ing-cuotas', 'Cuotas sociales', datos.totalCuotas,
                 datos.cuotasSociales.map(p => ({
                   fecha: p.fecha_pago,
                   proveedor: p.socios ? `${p.socios.nombre} ${p.socios.apellido}` : 'Socio',
                   descripcion: p.socios?.numero_socio || '',
                   monto: p.monto,
                 })), '#5dcaa5')}
-              {renderFila('ing-insc', 'Inscripciones', datos.totalInscripciones,
-                datos.inscripciones.map(p => ({
-                  fecha: p.fecha_pago,
-                  proveedor: p.socios ? `${p.socios.nombre} ${p.socios.apellido}` : 'Socio',
-                  descripcion: p.socios?.numero_socio || '',
-                  monto: p.monto,
-                })), '#5dcaa5')}
-              {Object.values(datos.otrosIngAgrupados).map(g =>
-                <div key={g.concepto}>{renderFila(`ing-${g.concepto}`, g.concepto, g.total, g.items, '#5dcaa5')}</div>
+              {Object.entries(datos.otrosIngAgrupados).filter(([, g]) => g.total !== 0).map(([key, g]) =>
+                <div key={key}>{renderFila(`ing-${key}`, g.concepto, g.total, g.items, '#5dcaa5')}</div>
               )}
               {/* Totales */}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1rem', borderTop: '2px solid var(--border-strong)', fontWeight: 'bold', fontSize: 14 }}>
@@ -396,13 +422,15 @@ export default function ReporteFinanciero() {
                   <i className="ti ti-trending-down"></i> Egresos
                 </div>
               </div>
-              {Object.values(datos.egresosAgrupados).length === 0 ? (
-                <div className="empty-state" style={{ padding: '1.5rem 1rem' }}><i className="ti ti-receipt-off"></i>Sin egresos en este período</div>
-              ) : (
-                Object.values(datos.egresosAgrupados).map(g =>
-                  <div key={g.concepto}>{renderFila(`eg-${g.concepto}`, g.concepto, g.total, g.items, '#f09595')}</div>
+              {(() => {
+                const cats = Object.entries(datos.egresosAgrupados).filter(([, g]) => g.total !== 0)
+                if (cats.length === 0) return (
+                  <div className="empty-state" style={{ padding: '1.5rem 1rem' }}><i className="ti ti-receipt-off"></i>Sin egresos en este período</div>
                 )
-              )}
+                return cats.map(([key, g]) =>
+                  <div key={key}>{renderFila(`eg-${key}`, g.concepto, g.total, g.items, '#f09595')}</div>
+                )
+              })()}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1rem', borderTop: '2px solid var(--border-strong)', fontWeight: 'bold', fontSize: 14 }}>
                 <span>Total egresos</span>
                 <strong style={{ color: '#f09595' }}>{formatearMontoConSimbolo(datos.totalEgresos)}</strong>
