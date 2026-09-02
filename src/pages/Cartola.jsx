@@ -36,7 +36,11 @@ export default function Cartola() {
   const [cambiandoAlias, setCambiandoAlias] = useState({}) // { movId: true }
   const [pagosMovimientos, setPagosMovimientos] = useState([])
   const [otrosIngresosTodos, setOtrosIngresosTodos] = useState([])
-  const [vinculandoCargo, setVinculandoCargo] = useState({}) // { movId: chequeId }
+  const [vinculandoCargo, setVinculandoCargo] = useState({}) // { movId: id del candidato elegido }
+  // Pagos de Cuentas por Pagar que NO salieron por cheque (efectivo, transferencia,
+  // otro): los giros por caja no tienen folio de chequera, así que sin esto un cargo
+  // pagado en efectivo se queda sin ningún candidato para vincular.
+  const [pagosCxP, setPagosCxP] = useState([])
 
   const normRut = (r) => r ? r.replace(/\s/g,'').replace(/\./g,'').toLowerCase() : ''
   const [selectedCartola, setSelectedCartola] = useState(null)
@@ -109,10 +113,22 @@ export default function Cartola() {
     setPagosSinConciliar(data || [])
   }
 
+  // Pagos de Cuentas por Pagar pagados por una vía distinta al cheque. Se cargan
+  // todos (conciliados o no): los sin movimiento_id alimentan el selector de
+  // candidatos, y los ya vinculados alimentan el chip del cargo conciliado.
+  const loadPagosCxP = async () => {
+    const { data } = await supabase.from('pagos_cuenta')
+      .select('id, monto, fecha_pago, medio_pago, movimiento_id, cuenta_id, cuentas_por_pagar(numero, concepto, proveedores(nombre))')
+      .neq('medio_pago', 'cheque')
+      .order('fecha_pago', { ascending: false })
+    setPagosCxP(data || [])
+  }
+
   useEffect(() => {
     loadCartolas()
     loadPagosSinConciliar()
     loadCandidatos()
+    loadPagosCxP()
     supabase.from('socios').select('id,nombre,apellido,rut,numero_socio').order('numero_socio').then(({ data }) => setSocios(data || []))
     supabase.from('periodos_cuota').select('*').order('anio', { ascending: false }).then(({ data }) => setPeriodos(data || []))
     // Cheques EMITIDOS desde chequera (Control chequera)
@@ -875,6 +891,100 @@ export default function Cartola() {
     }
   }
 
+  // ────────────────────────────────────────────────────────────
+  // Cargo ↔ pago de Cuentas por Pagar (giros que no salieron por cheque)
+  // ────────────────────────────────────────────────────────────
+  // Mismo patrón espejo que el vínculo cheque ↔ movimiento: las dos filas se
+  // escriben juntas o ninguna. Aquí el vínculo vive en pagos_cuenta.movimiento_id
+  // y en el estado/montos del movimiento.
+
+  // Etiqueta del pago CxP, tal como se muestra en el selector y en el chip.
+  const etiquetaPagoCxP = (p) => {
+    const cuenta = p.cuentas_por_pagar
+    const numero = String(cuenta?.numero ?? '').padStart(3, '0')
+    const proveedor = cuenta?.proveedores?.nombre || cuenta?.concepto || '—'
+    return `Pago CxP N°${numero} — ${proveedor}`
+  }
+
+  // Candidatos para un cargo: pagos CxP sin conciliar y de monto exacto. El monto
+  // del cargo viene negativo en la cartola; el del pago es positivo.
+  const candidatosPagoCxP = (mov) =>
+    pagosCxP.filter(p => !p.movimiento_id && p.monto === Math.abs(mov.monto))
+
+  const pagoCxPDe = (movId) => pagosCxP.find(p => p.movimiento_id === movId)
+
+  const handleVincularPagoCxP = async (mov, pagoId) => {
+    const pago = pagosCxP.find(p => p.id === pagoId)
+    if (!pago) { showToast('Pago no encontrado — recarga la página', 'error'); return }
+    try {
+      // GUARD: releer el movimiento antes de escribir. La lista en memoria puede
+      // ser anterior a que otro usuario/pestaña lo vinculara.
+      const { data: fresco, error: eFresco } = await supabase.from('movimientos')
+        .select('id, estado').eq('id', mov.id).maybeSingle()
+      if (eFresco) { showToast('No se pudo verificar el movimiento: ' + eFresco.message, 'error'); return }
+      if (!fresco) { showToast('El movimiento ya no existe — recarga la página', 'error'); return }
+      if (fresco.estado === 'conciliado') {
+        showToast('Este movimiento ya está conciliado — recarga la página', 'error')
+        loadMovimientos(selectedCartola.id)
+        return
+      }
+
+      // 1) Pago CxP → movimiento. `.is('movimiento_id', null)` es el candado
+      //    optimista: si otro proceso lo tomó entremedio, no afecta filas.
+      const { data: filas, error: e1 } = await supabase.from('pagos_cuenta')
+        .update({ movimiento_id: mov.id }).eq('id', pago.id).is('movimiento_id', null).select('id')
+      if (e1) throw new Error('Error al vincular el pago: ' + e1.message)
+      if (!filas || filas.length === 0) throw new Error('Ese pago ya fue vinculado a otro movimiento — recarga la página')
+
+      // 2) Movimiento → conciliado. Si falla, se revierte el paso 1.
+      const { error: e2 } = await supabase.from('movimientos').update({
+        estado: 'conciliado',
+        monto_conciliado: pago.monto,
+        monto_pendiente: 0,
+      }).eq('id', mov.id)
+      if (e2) {
+        await supabase.from('pagos_cuenta').update({ movimiento_id: null }).eq('id', pago.id)
+        throw new Error('Error al conciliar el movimiento (se revirtió el pago): ' + e2.message)
+      }
+
+      showToast(`Egreso vinculado a ${etiquetaPagoCxP(pago)}`)
+      setVinculandoCargo(prev => { const n = { ...prev }; delete n[mov.id]; return n })
+      loadMovimientos(selectedCartola.id)
+      loadPagosCxP()
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+  }
+
+  const handleDesvincularPagoCxP = async (mov, pago) => {
+    if (!confirm(`¿Desvincular este egreso de ${etiquetaPagoCxP(pago)}? El pago volverá a quedar sin conciliar.`)) return
+    try {
+      // 1) Soltar el pago.
+      const { error: e1 } = await supabase.from('pagos_cuenta')
+        .update({ movimiento_id: null }).eq('id', pago.id)
+      if (e1) throw new Error('Error al soltar el pago: ' + e1.message)
+
+      // 2) Movimiento de vuelta a libre. 'gasto' es el estado de un cargo sin
+      //    vincular en toda la app (lo pone parsearCartola al importar, y es el
+      //    que restaura el desvincular de cheques). Si falla, se revierte el paso 1.
+      const { error: e2 } = await supabase.from('movimientos').update({
+        estado: 'gasto',
+        monto_conciliado: 0,
+        monto_pendiente: Math.abs(mov.monto),
+      }).eq('id', mov.id)
+      if (e2) {
+        await supabase.from('pagos_cuenta').update({ movimiento_id: mov.id }).eq('id', pago.id)
+        throw new Error('Error al liberar el movimiento (se revirtió el pago): ' + e2.message)
+      }
+
+      showToast('Egreso desvinculado correctamente')
+      loadMovimientos(selectedCartola.id)
+      loadPagosCxP()
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+  }
+
   const handleDesvincularCargo = async (mov) => {
     if (!confirm('¿Desvincular este egreso del cheque? El cheque volverá a estado emitido.')) return
     try {
@@ -1515,6 +1625,8 @@ export default function Cartola() {
                 const sugerido = chequesChequera.find(c =>
                   mov.n_documento && String(c.folio) === String(mov.n_documento)
                 )
+                const pagoCxPVinculado = pagoCxPDe(mov.id)
+                const candidatosCxP = candidatosPagoCxP(mov)
                 return (
                   <div key={mov.id} style={{ borderBottom: '0.5px solid rgba(201,168,76,0.08)', padding: '1rem 1.5rem' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 8 }}>
@@ -1565,7 +1677,9 @@ export default function Cartola() {
                         <div style={{ background: 'rgba(201,168,76,0.06)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.6rem 0.9rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                           <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif', display: 'flex', alignItems: 'center', gap: 6 }}>
                             <i className="ti ti-alert-circle" style={{ fontSize: 14 }}></i>
-                            Sin cheque detectado — selecciona de Control chequera
+                            {candidatosCxP.length > 0
+                              ? 'Sin cheque detectado — selecciona de Control chequera o de Cuentas por pagar'
+                              : 'Sin cheque detectado — selecciona de Control chequera'}
                           </div>
                           <div style={{ display: 'flex', gap: 6 }}>
                             <select
@@ -1573,21 +1687,60 @@ export default function Cartola() {
                               onChange={e => setVinculandoCargo(prev => ({ ...prev, [mov.id]: e.target.value }))}
                               style={{ fontSize: 12, padding: '3px 6px', width: 'auto' }}
                             >
-                              <option value="">Seleccionar cheque emitido…</option>
-                              {chequesChequera.filter(c => c.estado !== 'cobrado').map(c => (
-                                <option key={c.id} value={c.id}>
-                                  N°{c.numero} — {formatearMontoConSimbolo(c.monto)} · {c.beneficiario || c.concepto || '—'}
-                                </option>
-                              ))}
+                              <option value="">Seleccionar documento a vincular…</option>
+                              <optgroup label="Cheques emitidos">
+                                {chequesChequera.filter(c => c.estado !== 'cobrado').map(c => (
+                                  <option key={c.id} value={c.id}>
+                                    N°{c.folio} — {formatearMontoConSimbolo(c.monto)} · {c.beneficiario || c.concepto || '—'}
+                                  </option>
+                                ))}
+                              </optgroup>
+                              {/* Pagos CxP que no salieron por cheque. Solo los de monto exacto:
+                                  a diferencia del cheque, acá no hay folio que confirme el calce,
+                                  así que el monto es la única evidencia dura. */}
+                              {candidatosCxP.length > 0 && (
+                                <optgroup label="Pagos de Cuentas por pagar">
+                                  {candidatosCxP.map(p => (
+                                    <option key={p.id} value={p.id}>
+                                      {etiquetaPagoCxP(p)} · {p.medio_pago} · {p.fecha_pago.split('-').reverse().join('/')}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              )}
                             </select>
+                            {/* El id elegido puede ser de chequera_detalle o de pagos_cuenta;
+                                son UUID de tablas distintas, así que la búsqueda desambigua
+                                sin tocar la ruta de cheques. */}
                             <button className="btn btn-sm btn-primary"
-                              onClick={() => handleVincularCargo(mov.id, vinculandoCargo[mov.id])}
+                              onClick={() => {
+                                const val = vinculandoCargo[mov.id]
+                                if (pagosCxP.some(p => p.id === val)) handleVincularPagoCxP(mov, val)
+                                else handleVincularCargo(mov.id, val)
+                              }}
                               disabled={!vinculandoCargo[mov.id]}>
                               <i className="ti ti-link"></i> Vincular
                             </button>
                           </div>
                         </div>
                       )
+                    )}
+
+                    {mov.estado === 'conciliado' && !chequeVinculado && pagoCxPVinculado && (
+                      <div style={{ background: 'rgba(29,158,117,0.1)', border: '0.5px solid rgba(29,158,117,0.3)', borderRadius: 8, padding: '0.6rem 0.9rem', fontSize: 12, color: '#5dcaa5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <i className="ti ti-circle-check" style={{ fontSize: 16 }}></i>
+                          Vinculado a {etiquetaPagoCxP(pagoCxPVinculado)}
+                          <span style={{ color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                            · {formatearMontoConSimbolo(pagoCxPVinculado.monto)} · {pagoCxPVinculado.medio_pago} · {pagoCxPVinculado.fecha_pago.split('-').reverse().join('/')}
+                          </span>
+                        </div>
+                        {editable && (
+                          <button className="btn btn-sm" style={{ color: '#f09595', borderColor: 'rgba(240,149,149,0.4)', fontSize: 11 }}
+                            onClick={() => handleDesvincularPagoCxP(mov, pagoCxPVinculado)}>
+                            <i className="ti ti-arrow-back-up"></i> Desvincular
+                          </button>
+                        )}
+                      </div>
                     )}
 
                     {mov.estado === 'conciliado' && chequeVinculado && (
