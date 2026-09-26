@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
 import { useAuth } from '../lib/useAuth'
 import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/montos'
+import { recalcularCuenta } from '../lib/cuentasPorPagar'
 
 const EMPTY_CHEQUERA = { nombre: '', banco: 'Banco Estado', folio_inicial: '', folio_final: '' }
 const EMPTY_DETALLE = { folio: '', fecha: new Date().toISOString().slice(0,10), beneficiario: '', concepto: '', monto: '', estado: 'emitido', cuenta_id: '' }
@@ -142,9 +143,9 @@ export default function Chequera() {
           loadDetalles(selected.id)
           return
         }
-        const nuevoPagado = (cuenta.monto_pagado || 0) + montoNum
-        const nuevoEstado = nuevoPagado >= cuenta.monto_total ? 'pagada' : 'parcial'
-        await supabase.from('cuentas_por_pagar').update({ monto_pagado: nuevoPagado, estado: nuevoEstado }).eq('id', cuenta_id)
+        // El estado de la cuenta se recalcula desde pagos_cuenta, no de forma incremental
+        const rec = await recalcularCuenta(cuenta_id)
+        if (rec.error) showToast('Cheque vinculado pero error actualizando la cuenta: ' + rec.error.message, 'error')
         loadCuentasPorPagar()
       }
     }
@@ -270,7 +271,9 @@ export default function Chequera() {
   const detEstadoBadge = (estado) => {
     if (estado === 'cobrado') return <span className="badge badge-active">Cobrado</span>
     if (estado === 'emitido') return <span className="badge badge-pending">Emitido</span>
-    return <span className="badge badge-inactive">Anulado</span>
+    if (estado === 'anulado') return <span className="badge badge-inactive">Anulado</span>
+    // Estado desconocido: mostrar el valor crudo, no asumir "Anulado"
+    return <span className="badge badge-inactive">{estado || '—'}</span>
   }
 
   return (
@@ -352,10 +355,14 @@ export default function Chequera() {
                           {d.monto ? formatearMontoConSimbolo(d.monto) : '—'}
                         </td>
                         <td>
-                          {detEstadoBadge(d.estado)}
-                          {d.estado === 'emitido' && (
-                            <button className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => handleCambiarEstado(d.id, 'cobrado')}>Cobrado</button>
-                          )}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                            {detEstadoBadge(d.estado)}
+                            {d.estado === 'emitido' && (
+                              <button className="btn btn-sm" onClick={() => handleCambiarEstado(d.id, 'cobrado')}>
+                                <i className="ti ti-check"></i> Marcar cobrado
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td>
                           {(() => {

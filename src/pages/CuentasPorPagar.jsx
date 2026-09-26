@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
 import { useAuth } from '../lib/useAuth'
 import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/montos'
+import { leerEstadoCuenta, recalcularCuenta, obtenerChequeraYFolio } from '../lib/cuentasPorPagar'
 
 const MEDIOS_PAGO = [
   { value: 'cheque', label: 'Cheque' },
@@ -29,6 +30,8 @@ const sumarMeses = (fechaStr, n) => {
 }
 
 const formatearFecha = (f) => f ? f.split('-').reverse().join('/') : '—'
+// dd/mm, para el concepto del cheque combinado (que se lee truncado en tabla)
+const formatearFechaCorta = (f) => f ? f.split('-').reverse().slice(0, 2).join('/') : ''
 
 const estadoBadge = (estado) => {
   if (estado === 'pagada') return <span className="badge badge-active">Pagada</span>
@@ -80,6 +83,12 @@ export default function CuentasPorPagar() {
   const [formCheque, setFormCheque] = useState({ monto: '', concepto: '', fecha: hoyStr() })
   const [montoCheque, setMontoCheque] = useState('')
   const [savingCheque, setSavingCheque] = useState(false)
+
+  // Cheque por varias cuotas programadas
+  const [cuotasSel, setCuotasSel] = useState({})           // { [pago_id]: true }
+  const [chequeCuotasCuentaId, setChequeCuotasCuentaId] = useState(null)
+  const [formChequeCuotas, setFormChequeCuotas] = useState({ concepto: '', fecha: hoyStr() })
+  const [savingChequeCuotas, setSavingChequeCuotas] = useState(false)
 
   useEffect(() => { loadAll() }, [])
 
@@ -267,6 +276,16 @@ export default function CuentasPorPagar() {
     if (monto <= 0) { showToast('Monto inválido', 'error'); return }
 
     setSavingPago(true)
+
+    // Guard de saldo: se relee desde la base, el saldo en memoria puede estar viejo
+    const est = await leerEstadoCuenta(cuenta.id)
+    if (est.error) { setSavingPago(false); showToast('Error al leer la cuenta: ' + est.error.message, 'error'); return }
+    if (monto > est.saldo) {
+      setSavingPago(false)
+      showToast(`El monto (${formatearMontoConSimbolo(monto)}) excede el saldo de la cuenta (${formatearMontoConSimbolo(est.saldo)})`, 'error')
+      return
+    }
+
     const { error: ePago } = await supabase.from('pagos_cuenta').insert({
       cuenta_id: cuenta.id,
       monto,
@@ -278,18 +297,10 @@ export default function CuentasPorPagar() {
     })
     if (ePago) { setSavingPago(false); showToast('Error al registrar pago: ' + ePago.message, 'error'); return }
 
-    const nuevoPagado = (cuenta.monto_pagado || 0) + monto
-    const nuevoEstado = nuevoPagado >= cuenta.monto_total ? 'pagada' : 'parcial'
-    const { error: eCuenta } = await supabase.from('cuentas_por_pagar').update({
-      monto_pagado: nuevoPagado,
-      estado: nuevoEstado,
-    }).eq('id', cuenta.id)
-
-    if (eCuenta) { setSavingPago(false); showToast('Pago registrado pero error actualizando cuenta', 'error'); return }
-
-    if (formPago.medio_pago === 'cheque' && formPago.chequera_detalle_id) {
-      await supabase.from('chequera_detalle').update({ estado: 'cobrado' }).eq('id', formPago.chequera_detalle_id)
-    }
+    // El cheque queda 'emitido': usarlo para pagar una cuenta no significa que el
+    // banco lo pagó. Pasa a 'cobrado' al calzarlo con la cartola o a mano.
+    const rec = await recalcularCuenta(cuenta.id)
+    if (rec.error) { setSavingPago(false); showToast('Pago registrado pero error actualizando cuenta: ' + rec.error.message, 'error'); loadAll(); return }
 
     setSavingPago(false)
     setPagoCuentaId(null)
@@ -312,28 +323,25 @@ export default function CuentasPorPagar() {
     if (monto <= 0) { showToast('Monto inválido', 'error'); return }
 
     setSavingCheque(true)
-    const { data: chequera, error: eCheq } = await supabase.from('chequeras').select('*').eq('estado', 'activa').limit(1).maybeSingle()
-    if (eCheq || !chequera) {
+
+    // Guard de saldo antes de quemar un folio
+    const est = await leerEstadoCuenta(cuenta.id)
+    if (est.error) { setSavingCheque(false); showToast('Error al leer la cuenta: ' + est.error.message, 'error'); return }
+    if (monto > est.saldo) {
       setSavingCheque(false)
-      showToast('No hay chequera activa. Crea una en Control chequera primero.', 'error')
+      showToast(`El monto (${formatearMontoConSimbolo(monto)}) excede el saldo de la cuenta (${formatearMontoConSimbolo(est.saldo)})`, 'error')
       return
     }
 
-    const { data: usados } = await supabase.from('chequera_detalle').select('folio').eq('chequera_id', chequera.id).order('folio', { ascending: false }).limit(1)
-    const ultimoFolio = usados?.[0]?.folio
-    const proximoFolio = ultimoFolio ? ultimoFolio + 1 : chequera.folio_inicial
-    if (proximoFolio > chequera.folio_final) {
-      setSavingCheque(false)
-      showToast(`Chequera agotada (último folio ${chequera.folio_final})`, 'error')
-      return
-    }
+    const cheq = await obtenerChequeraYFolio()
+    if (cheq.error) { setSavingCheque(false); showToast(cheq.error.message, 'error'); return }
+    const { chequera, folio } = cheq
 
-    const beneficiario = cuenta.proveedores?.nombre || ''
     const { data: detalle, error: eDet } = await supabase.from('chequera_detalle').insert({
       chequera_id: chequera.id,
-      folio: proximoFolio,
+      folio,
       fecha: formCheque.fecha,
-      beneficiario,
+      beneficiario: cuenta.proveedores?.nombre || '',
       concepto: formCheque.concepto || cuenta.concepto,
       monto,
       estado: 'emitido',
@@ -341,24 +349,39 @@ export default function CuentasPorPagar() {
 
     if (eDet) { setSavingCheque(false); showToast('Error generando cheque: ' + eDet.message, 'error'); return }
 
-    const { error: ePago } = await supabase.from('pagos_cuenta').insert({
+    // Desde acá el cheque ya existe: si algo falla se compensa borrándolo, para no
+    // dejar un cheque huérfano consumiendo folio.
+    const { data: pago, error: ePago } = await supabase.from('pagos_cuenta').insert({
       cuenta_id: cuenta.id,
       monto,
       fecha_pago: formCheque.fecha,
       medio_pago: 'cheque',
       chequera_detalle_id: detalle.id,
-      comentario: `Cheque N°${proximoFolio} generado`,
+      comentario: `Cheque N°${folio} generado`,
       estado: 'pagado',
-    })
-    if (ePago) { setSavingCheque(false); showToast('Cheque creado pero error en pago: ' + ePago.message, 'error'); return }
+    }).select('id').single()
 
-    const nuevoPagado = (cuenta.monto_pagado || 0) + monto
-    const nuevoEstado = nuevoPagado >= cuenta.monto_total ? 'pagada' : 'parcial'
-    await supabase.from('cuentas_por_pagar').update({ monto_pagado: nuevoPagado, estado: nuevoEstado }).eq('id', cuenta.id)
+    if (ePago) {
+      await supabase.from('chequera_detalle').delete().eq('id', detalle.id)
+      setSavingCheque(false)
+      showToast('Error al registrar el pago; el cheque fue revertido: ' + ePago.message, 'error')
+      loadAll()
+      return
+    }
+
+    const rec = await recalcularCuenta(cuenta.id)
+    if (rec.error) {
+      await supabase.from('pagos_cuenta').delete().eq('id', pago.id)
+      await supabase.from('chequera_detalle').delete().eq('id', detalle.id)
+      setSavingCheque(false)
+      showToast('Error al actualizar la cuenta; el cheque fue revertido: ' + rec.error.message, 'error')
+      loadAll()
+      return
+    }
 
     setSavingCheque(false)
     setChequeCuentaId(null)
-    showToast(`Cheque N°${proximoFolio} generado y pago registrado`)
+    showToast(`Cheque N°${folio} generado y pago registrado`)
     loadAll()
   }
 
@@ -366,36 +389,149 @@ export default function CuentasPorPagar() {
   const handleGenerarChequeDePagoProgramado = async (cuenta, pago) => {
     if (!confirm(`¿Generar cheque por ${formatearMontoConSimbolo(pago.monto)} para ${cuenta.proveedores?.nombre || 'proveedor'}?`)) return
 
-    const { data: chequera } = await supabase.from('chequeras').select('*').eq('estado', 'activa').limit(1).maybeSingle()
-    if (!chequera) { showToast('No hay chequera activa', 'error'); return }
+    const est = await leerEstadoCuenta(cuenta.id)
+    if (est.error) { showToast('Error al leer la cuenta: ' + est.error.message, 'error'); return }
+    if (pago.monto > est.saldo) {
+      showToast(`La cuota (${formatearMontoConSimbolo(pago.monto)}) excede el saldo de la cuenta (${formatearMontoConSimbolo(est.saldo)})`, 'error')
+      return
+    }
 
-    const { data: usados } = await supabase.from('chequera_detalle').select('folio').eq('chequera_id', chequera.id).order('folio', { ascending: false }).limit(1)
-    const ultimoFolio = usados?.[0]?.folio
-    const proximoFolio = ultimoFolio ? ultimoFolio + 1 : chequera.folio_inicial
-    if (proximoFolio > chequera.folio_final) { showToast('Chequera agotada', 'error'); return }
+    const cheq = await obtenerChequeraYFolio()
+    if (cheq.error) { showToast(cheq.error.message, 'error'); return }
+    const { chequera, folio } = cheq
 
     const { data: detalle, error: eDet } = await supabase.from('chequera_detalle').insert({
       chequera_id: chequera.id,
-      folio: proximoFolio,
+      folio,
       fecha: pago.fecha_pago,
       beneficiario: cuenta.proveedores?.nombre || '',
       concepto: cuenta.concepto,
       monto: pago.monto,
       estado: 'emitido',
     }).select().single()
-    if (eDet) { showToast('Error generando cheque', 'error'); return }
+    if (eDet) { showToast('Error generando cheque: ' + eDet.message, 'error'); return }
 
-    await supabase.from('pagos_cuenta').update({
+    const { error: eUpd } = await supabase.from('pagos_cuenta').update({
       chequera_detalle_id: detalle.id,
       estado: 'pagado',
-      comentario: `Cheque N°${proximoFolio} generado desde pago programado`,
+      comentario: `Cheque N°${folio} generado desde pago programado`,
     }).eq('id', pago.id)
 
-    const nuevoPagado = (cuenta.monto_pagado || 0) + pago.monto
-    const nuevoEstado = nuevoPagado >= cuenta.monto_total ? 'pagada' : 'parcial'
-    await supabase.from('cuentas_por_pagar').update({ monto_pagado: nuevoPagado, estado: nuevoEstado }).eq('id', cuenta.id)
+    if (eUpd) {
+      await supabase.from('chequera_detalle').delete().eq('id', detalle.id)
+      showToast('Error al vincular la cuota; el cheque fue revertido: ' + eUpd.message, 'error')
+      loadAll()
+      return
+    }
 
-    showToast(`Cheque N°${proximoFolio} generado`)
+    const rec = await recalcularCuenta(cuenta.id)
+    if (rec.error) {
+      await revertirPagosAProgramado([pago])
+      await supabase.from('chequera_detalle').delete().eq('id', detalle.id)
+      showToast('Error al actualizar la cuenta; el cheque fue revertido: ' + rec.error.message, 'error')
+      loadAll()
+      return
+    }
+
+    showToast(`Cheque N°${folio} generado`)
+    loadAll()
+  }
+
+  // ── Un cheque por varias cuotas programadas ────────────
+  // Devuelve las cuotas a su estado original: 'programado', sin cheque y con su
+  // fecha_pago y comentario previos. Se usa como compensación.
+  const revertirPagosAProgramado = async (pagosOriginales) => {
+    for (const p of pagosOriginales) {
+      await supabase.from('pagos_cuenta').update({
+        estado: 'programado',
+        chequera_detalle_id: null,
+        fecha_pago: p.fecha_pago,
+        comentario: p.comentario || null,
+      }).eq('id', p.id)
+    }
+  }
+
+  const cuotasSeleccionadasDe = (cuentaId) =>
+    pagosDe(cuentaId).filter(p => p.estado === 'programado' && cuotasSel[p.id])
+
+  const abrirChequeCuotas = (cuenta) => {
+    const sel = cuotasSeleccionadasDe(cuenta.id)
+    if (sel.length === 0) return
+    const fechas = sel.map(p => formatearFechaCorta(p.fecha_pago)).join(', ')
+    setFormChequeCuotas({ concepto: `${cuenta.concepto} — cuotas ${fechas}`, fecha: hoyStr() })
+    setChequeCuotasCuentaId(cuenta.id)
+  }
+
+  const handleGenerarChequeDeCuotas = async () => {
+    const cuenta = cuentaChequeCuotas
+    if (!cuenta) return
+
+    const seleccionados = cuotasSeleccionadasDe(cuenta.id)
+    if (seleccionados.length === 0) { showToast('Selecciona al menos una cuota', 'error'); return }
+    const monto = seleccionados.reduce((s, p) => s + (p.monto || 0), 0)
+    if (monto <= 0) { showToast('Monto inválido', 'error'); return }
+
+    setSavingChequeCuotas(true)
+
+    const est = await leerEstadoCuenta(cuenta.id)
+    if (est.error) { setSavingChequeCuotas(false); showToast('Error al leer la cuenta: ' + est.error.message, 'error'); return }
+    if (monto > est.saldo) {
+      setSavingChequeCuotas(false)
+      showToast(`El total seleccionado (${formatearMontoConSimbolo(monto)}) excede el saldo de la cuenta (${formatearMontoConSimbolo(est.saldo)})`, 'error')
+      return
+    }
+
+    const cheq = await obtenerChequeraYFolio()
+    if (cheq.error) { setSavingChequeCuotas(false); showToast(cheq.error.message, 'error'); return }
+    const { chequera, folio } = cheq
+
+    // UN cheque por la suma de las cuotas. El banco lo cobrará como un solo
+    // cargo, así que el calce con la cartola (un cargo ↔ un cheque) sigue igual.
+    const { data: detalle, error: eDet } = await supabase.from('chequera_detalle').insert({
+      chequera_id: chequera.id,
+      folio,
+      fecha: formChequeCuotas.fecha,
+      beneficiario: cuenta.proveedores?.nombre || '',
+      concepto: formChequeCuotas.concepto || cuenta.concepto,
+      monto,
+      estado: 'emitido',
+    }).select().single()
+    if (eDet) { setSavingChequeCuotas(false); showToast('Error generando cheque: ' + eDet.message, 'error'); return }
+
+    // Las N cuotas pasan a 'pagado' apuntando al mismo cheque. Se registra cuáles
+    // se alcanzaron a marcar para poder revertir exactamente esas si algo falla.
+    const marcados = []
+    let fallo = null
+    for (const p of seleccionados) {
+      const { error } = await supabase.from('pagos_cuenta').update({
+        estado: 'pagado',
+        fecha_pago: formChequeCuotas.fecha,
+        chequera_detalle_id: detalle.id,
+        comentario: `Cheque N°${folio} — cuota ${formatearFechaCorta(p.fecha_pago)}`,
+      }).eq('id', p.id)
+      if (error) { fallo = error; break }
+      marcados.push(p)
+    }
+
+    if (!fallo) {
+      const rec = await recalcularCuenta(cuenta.id)
+      if (rec.error) fallo = rec.error
+    }
+
+    if (fallo) {
+      await revertirPagosAProgramado(marcados)
+      await supabase.from('chequera_detalle').delete().eq('id', detalle.id)
+      await recalcularCuenta(cuenta.id)
+      setSavingChequeCuotas(false)
+      showToast('Error al vincular las cuotas; el cheque fue revertido: ' + fallo.message, 'error')
+      loadAll()
+      return
+    }
+
+    setSavingChequeCuotas(false)
+    setChequeCuotasCuentaId(null)
+    setCuotasSel({})
+    showToast(`Cheque N°${folio} generado por ${seleccionados.length} cuota(s)`)
     loadAll()
   }
 
@@ -511,6 +647,7 @@ export default function CuentasPorPagar() {
 
   const cuentaPago = pagoCuentaId ? cuentas.find(c => c.id === pagoCuentaId) : null
   const cuentaCheque = chequeCuentaId ? cuentas.find(c => c.id === chequeCuentaId) : null
+  const cuentaChequeCuotas = chequeCuotasCuentaId ? cuentas.find(c => c.id === chequeCuotasCuentaId) : null
 
   return (
     <div>
@@ -595,7 +732,7 @@ export default function CuentasPorPagar() {
                 const respaldos = respaldosDe(c.id)
                 return (
                   <React.Fragment key={c.id}>
-                    <tr style={{ cursor: 'pointer' }} onClick={() => setExpandedId(expanded ? null : c.id)}>
+                    <tr style={{ cursor: 'pointer' }} onClick={() => { setExpandedId(expanded ? null : c.id); setCuotasSel({}) }}>
                       <td><span className="chip">{String(c.numero || '').padStart(3, '0')}</span></td>
                       <td>
                         <div>{c.proveedores?.nombre || '—'}</div>
@@ -711,14 +848,38 @@ export default function CuentasPorPagar() {
                           )}
 
                           {/* Pagos programados */}
-                          {pagosProgramados.length > 0 && (
+                          {pagosProgramados.length > 0 && (() => {
+                            const sel = pagosProgramados.filter(p => cuotasSel[p.id])
+                            const totalSel = sel.reduce((s, p) => s + (p.monto || 0), 0)
+                            const excede = totalSel > saldo
+                            const todasSel = sel.length === pagosProgramados.length
+                            return (
                             <div style={{ marginTop: 16 }}>
                               <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6, fontFamily: 'sans-serif' }}>Pagos programados ({pagosProgramados.length})</div>
                               <table>
-                                <thead><tr><th>Fecha</th><th>Monto</th><th>Medio</th><th></th></tr></thead>
+                                <thead><tr>
+                                  <th style={{ width: 28 }}>
+                                    <input type="checkbox" checked={todasSel}
+                                      title={todasSel ? 'Deseleccionar todas' : 'Seleccionar todas'}
+                                      onChange={e => setCuotasSel(prev => {
+                                        const n = { ...prev }
+                                        pagosProgramados.forEach(p => { if (e.target.checked) n[p.id] = true; else delete n[p.id] })
+                                        return n
+                                      })} />
+                                  </th>
+                                  <th>Fecha</th><th>Monto</th><th>Medio</th><th></th>
+                                </tr></thead>
                                 <tbody>
                                   {pagosProgramados.map(p => (
                                     <tr key={p.id}>
+                                      <td>
+                                        <input type="checkbox" checked={!!cuotasSel[p.id]}
+                                          onChange={e => setCuotasSel(prev => {
+                                            const n = { ...prev }
+                                            if (e.target.checked) n[p.id] = true; else delete n[p.id]
+                                            return n
+                                          })} />
+                                      </td>
                                       <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{formatearFecha(p.fecha_pago)}</td>
                                       <td style={{ color: '#fac775', fontWeight: 'bold' }}>{formatearMontoConSimbolo(p.monto)}</td>
                                       <td><span className="chip" style={{ fontSize: 10 }}>{p.medio_pago}</span></td>
@@ -731,8 +892,29 @@ export default function CuentasPorPagar() {
                                   ))}
                                 </tbody>
                               </table>
+                              {editable && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                                  <button className="btn btn-sm" disabled={sel.length === 0 || excede}
+                                    style={{ color: sel.length === 0 || excede ? undefined : '#85b7eb', borderColor: sel.length === 0 || excede ? undefined : 'rgba(55,138,221,0.4)' }}
+                                    onClick={() => abrirChequeCuotas(c)}>
+                                    <i className="ti ti-writing"></i> Generar cheque por seleccionadas
+                                    {sel.length > 0 && ` (${sel.length} cuota${sel.length === 1 ? '' : 's'} · ${formatearMontoConSimbolo(totalSel)})`}
+                                  </button>
+                                  {excede && (
+                                    <span style={{ fontSize: 11, color: '#f09595', fontFamily: 'sans-serif' }}>
+                                      El total seleccionado excede el saldo de la cuenta ({formatearMontoConSimbolo(saldo)})
+                                    </span>
+                                  )}
+                                  {sel.length === 0 && (
+                                    <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                                      Marca cuotas para juntarlas en un solo cheque
+                                    </span>
+                                  )}
+                                </div>
+                              )}
                             </div>
-                          )}
+                            )
+                          })()}
                         </td>
                       </tr>
                     )}
@@ -932,6 +1114,55 @@ export default function CuentasPorPagar() {
           </div>
         </div>
       )}
+
+      {/* Modal Generar cheque por cuotas seleccionadas */}
+      {cuentaChequeCuotas && (() => {
+        const sel = cuotasSeleccionadasDe(cuentaChequeCuotas.id)
+        const totalSel = sel.reduce((s, p) => s + (p.monto || 0), 0)
+        const saldoCuenta = cuentaChequeCuotas.monto_total - (cuentaChequeCuotas.monto_pagado || 0)
+        return (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setChequeCuotasCuentaId(null)}>
+          <div className="modal" style={{ width: 540 }}>
+            <div className="modal-header">
+              <div className="modal-title">Generar cheque por {sel.length} cuota{sel.length === 1 ? '' : 's'}</div>
+              <button className="btn btn-sm" onClick={() => setChequeCuotasCuentaId(null)}><i className="ti ti-x"></i></button>
+            </div>
+            <div style={{ padding: '0 1.25rem 0.5rem', fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+              Beneficiario: <strong>{cuentaChequeCuotas.proveedores?.nombre || '—'}</strong>
+              {cuentaChequeCuotas.proveedores?.rut && <> · RUT: <strong>{cuentaChequeCuotas.proveedores.rut}</strong></>}
+              <div style={{ marginTop: 4 }}>Saldo cuenta: <strong style={{ color: '#fac775' }}>{formatearMontoConSimbolo(saldoCuenta)}</strong></div>
+              <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {sel.map(p => (
+                  <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span>Cuota {formatearFecha(p.fecha_pago)}</span>
+                    <span style={{ color: '#fac775' }}>{formatearMontoConSimbolo(p.monto)}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 4, fontWeight: 'bold' }}>
+                  <span>Total del cheque</span>
+                  <span style={{ color: '#5dcaa5' }}>{formatearMontoConSimbolo(totalSel)}</span>
+                </div>
+              </div>
+            </div>
+            <div className="form-grid">
+              <div className="form-group"><label>Fecha del cheque</label>
+                <input type="date" value={formChequeCuotas.fecha} onChange={e => setFormChequeCuotas(f => ({ ...f, fecha: e.target.value }))} />
+              </div>
+              <div className="form-group full"><label>Concepto</label>
+                <input value={formChequeCuotas.concepto} onChange={e => setFormChequeCuotas(f => ({ ...f, concepto: e.target.value }))} />
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setChequeCuotasCuentaId(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleGenerarChequeDeCuotas}
+                disabled={savingChequeCuotas || sel.length === 0 || totalSel > saldoCuenta}>
+                {savingChequeCuotas ? <><i className="ti ti-loader"></i> Generando…</> : <><i className="ti ti-writing"></i> Generar cheque por {formatearMontoConSimbolo(totalSel)}</>}
+              </button>
+            </div>
+          </div>
+        </div>
+        )
+      })()}
     </div>
   )
 }
