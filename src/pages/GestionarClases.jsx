@@ -49,6 +49,8 @@ export default function GestionarClases() {
   // admin y andacor (andacor completa después lo que el admin dejó pendiente).
   const esAdmin = user?.rol === 'admin'
   const puedeAsignarProfesor = esAdmin || user?.rol === 'andacor'
+  // Cancelar una solicitud que no se convertirá en clase: admin y andacor.
+  const puedeCancelarSolicitud = esAdmin || user?.rol === 'andacor'
   const nombreUsuario = user?.nombre || user?.username || 'usuario'
 
   // Feedback (bitácora): alumno + contexto de la clase para el formulario reutilizable
@@ -571,6 +573,20 @@ export default function GestionarClases() {
     setGuardandoQuitar(false)
   }
 
+  // ----- Cancelar una solicitud pendiente -----
+  // No se borra la fila: 'cancelada' es historial y todos los listados
+  // operativos ya filtran por estado. Solo la asistencia colgando (datos
+  // viejos) se elimina, porque dejaría un asistente fantasma en el reporte.
+  const handleCancelarSolicitud = async (sol) => {
+    if (!confirm(`¿Cancelar la solicitud de ${sol.participanteNombre}? No quedará inscrito en ninguna clase de esta fecha.`)) return
+    const { error: eA } = await supabase.from('clases_asistencia').delete().eq('solicitud_id', sol.id)
+    if (eA) { showToast('No se pudo limpiar su asistencia: ' + eA.message, 'error'); return }
+    const { error } = await supabase.from('clases_solicitudes').update({ estado: 'cancelada' }).eq('id', sol.id)
+    if (error) { showToast('Error al cancelar: ' + error.message, 'error'); return }
+    showToast(`Solicitud de ${sol.participanteNombre} cancelada`)
+    loadFecha(fechaSel)
+  }
+
   // ----- Fusionar grupos -----
   // Vuelca todos los participantes (y sus asistencias) en el grupo destino y
   // elimina el origen. El destino conserva SU profesor y SU horario: nunca se
@@ -846,11 +862,19 @@ export default function GestionarClases() {
                           {s.participante_tipo === 'beneficiario' ? `Hijo/a de ${s.socioNombre}` : 'Socio titular'} · Nivel: {nivelNombre(s.nivel_id)}
                         </div>
                       </div>
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                      {editable && puedeCancelarSolicitud && (
+                        <button className="btn btn-sm" style={{ color: '#f09595', borderColor: 'rgba(240,149,149,0.4)' }}
+                          title="Cancelar esta solicitud" onClick={() => handleCancelarSolicitud(s)}>
+                          <i className="ti ti-trash"></i>
+                        </button>
+                      )}
                       {editable && (
                         <button className="btn btn-sm btn-primary" style={{ flexShrink: 0 }} onClick={() => openAgrupar(s)}>
                           <i className="ti ti-plus"></i> Agrupar
                         </button>
                       )}
+                      </div>
                     </div>
                   ))}
                 </div>
