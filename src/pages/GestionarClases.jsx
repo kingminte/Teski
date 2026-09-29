@@ -105,20 +105,32 @@ export default function GestionarClases() {
   const [asignarProfId, setAsignarProfId] = useState('')
   const [guardandoAsignar, setGuardandoAsignar] = useState(false)
 
+  // Cortes: para bloquear cambios en clases ya cerradas/pagadas
+  const [cortes, setCortes] = useState([])
+
+  // Quitar participante / fusionar grupos
+  const [quitarSol, setQuitarSol] = useState(null)      // { sol, grupo }
+  const [guardandoQuitar, setGuardandoQuitar] = useState(false)
+  const [fusionarGrupo, setFusionarGrupo] = useState(null)
+  const [fusionDestinoId, setFusionDestinoId] = useState('')
+  const [guardandoFusion, setGuardandoFusion] = useState(false)
+
   const nivelNombre = (id) => niveles.find(n => n.id === id)?.nombre || '—'
 
   useEffect(() => { loadBase() }, [])
   useEffect(() => { if (fechaSel) loadFecha(fechaSel) }, [fechaSel])
 
   const loadBase = async () => {
-    const [{ data: disp }, { data: profs }, { data: nivs }] = await Promise.all([
+    const [{ data: disp }, { data: profs }, { data: nivs }, { data: cts }] = await Promise.all([
       supabase.from('clases_disponibilidad').select('*').order('fecha'),
       supabase.from('clases_profesores').select('*').eq('activo', true).order('nombre'),
       supabase.from('clases_niveles').select('*').order('orden'),
+      supabase.from('clases_cortes_pago').select('id,numero,estado'),
     ])
     setDisponibilidad(disp || [])
     setProfesores(profs || [])
     setNiveles(nivs || [])
+    setCortes(cts || [])
     const hoy = hoyISO()
     const futura = (disp || []).find(d => d.fecha >= hoy)
     const inicial = (futura || (disp || [])[(disp || []).length - 1] || {}).fecha || ''
@@ -196,8 +208,38 @@ export default function GestionarClases() {
   // Destinos válidos para una solicitud: mismo tipo, solo grupos 'agendada'
   // y (al mover) excluyendo el grupo origen. Sirve para agrupar un pendiente
   // y para mover un alumno del roster de un grupo agendada a otro.
-  const gruposDestinoDe = (sol) => grupos.filter(g => g.tipo === sol.tipo && g.estado === 'agendada' && g.id !== sol.grupo_id)
+  // Un grupo cuyo corte ya se cerró o pagó es historia contable: no se toca.
+  const corteBloqueado = (g) => {
+    const c = g?.corte_id ? cortes.find(x => x.id === g.corte_id) : null
+    return c && c.estado !== 'abierto' ? c : null
+  }
+  const bloqueoPorCorte = (...gs) => {
+    for (const g of gs) {
+      const c = corteBloqueado(g)
+      if (c) return `El corte #${c.numero} está ${c.estado === 'pagado' ? 'pagado' : 'cerrado'}. No se pueden mover ni quitar participantes de sus clases.`
+    }
+    return null
+  }
+  const etiquetaGrupo = (g) => `${hhmm(g.hora_inicio)}–${hhmm(g.hora_fin)} ${g.tipo === 'snowboard' ? 'snowboard' : 'esquí'}`
+  const trazaGrupo = (g, texto) => (g.comentario ? `${g.comentario}\n${texto}` : texto)
+  const hoyFmt = () => fmtDDMMYYYY(hoyISO())
+  const labelTipo = (t) => (t === 'snowboard' ? 'snowboard' : 'esquí')
+  // Mover a un grupo ya realizada (o desde uno) reescribe asistencia: solo admin.
+  const tocaRealizada = (...gs) => gs.some(g => g?.estado === 'realizada')
+
+  // Destinos de un alumno: siempre de la MISMA fecha (grupos ya viene acotado a
+  // fechaSel). Se permite cruzar disciplina (se confirma al guardar) y, para
+  // admin, mover desde/hacia clases ya realizadas. Nunca a cortes cerrados.
+  const gruposDestinoDe = (sol) => grupos.filter(g =>
+    g.id !== sol.grupo_id &&
+    !corteBloqueado(g) &&
+    (g.estado === 'agendada' || (esAdmin && g.estado === 'realizada')),
+  )
   const openAgrupar = (sol) => {
+    const origen = sol.grupo_id ? grupos.find(g => g.id === sol.grupo_id) : null
+    const bloq = bloqueoPorCorte(origen)
+    if (bloq) { showToast(bloq, 'error'); return }
+    if (tocaRealizada(origen) && !esAdmin) { showToast('Esta clase ya está realizada: solo un administrador puede mover participantes.', 'error'); return }
     const destinos = gruposDestinoDe(sol)
     setAgruparSol(sol)
     setAgruparModo(destinos.length > 0 ? 'existente' : 'nuevo')
@@ -288,6 +330,18 @@ export default function GestionarClases() {
   const handleConfirmarAgrupar = async () => {
     const sol = agruparSol
     const moviendo = !!sol.grupo_id
+    const origen = moviendo ? grupos.find(g => g.id === sol.grupo_id) : null
+    const destinoSel = agruparModo === 'existente' ? grupos.find(g => g.id === agruparGrupoId) : null
+
+    // Guards antes de tocar nada
+    const bloq = bloqueoPorCorte(origen, destinoSel)
+    if (bloq) { showToast(bloq, 'error'); return }
+    if (tocaRealizada(origen, destinoSel) && !esAdmin) {
+      showToast('Hay una clase ya realizada involucrada: solo un administrador puede mover participantes.', 'error'); return
+    }
+    if (destinoSel && destinoSel.tipo !== sol.tipo &&
+        !confirm(`La solicitud es de ${labelTipo(sol.tipo)} y el grupo destino es de ${labelTipo(destinoSel.tipo)}. ¿Mover de todas formas?`)) return
+
     setGuardandoAgrupar(true)
     try {
       let grupoId = agruparGrupoId
@@ -304,12 +358,58 @@ export default function GestionarClases() {
         grupoId = data.id
       }
       if (!grupoId) { showToast('Elige o crea un grupo', 'error'); setGuardandoAgrupar(false); return }
-      const { error: e2 } = await supabase.from('clases_solicitudes').update({ grupo_id: grupoId, estado: 'agendada' }).eq('id', sol.id)
+
+      // El alumno hereda el estado del grupo destino (un grupo nuevo nace agendada).
+      const destinoRealizada = destinoSel?.estado === 'realizada'
+      const { error: e2 } = await supabase.from('clases_solicitudes')
+        .update({ grupo_id: grupoId, estado: destinoRealizada ? 'realizada' : 'agendada' }).eq('id', sol.id)
       if (e2) throw new Error(e2.message)
-      showToast(moviendo ? 'Alumno movido' : 'Solicitud agendada')
+
+      // La asistencia sigue al participante: se remapea si existía, se crea si
+      // el destino ya está realizada y el alumno venía de un grupo sin marcar.
+      if (moviendo) {
+        const { data: prev } = await supabase.from('clases_asistencia').select('id').eq('solicitud_id', sol.id)
+        if (prev?.length) {
+          const { error: eA } = await supabase.from('clases_asistencia').update({ grupo_id: grupoId }).eq('id', prev[0].id)
+          if (eA) throw new Error('Alumno movido pero no se pudo mover su asistencia: ' + eA.message)
+        } else if (destinoRealizada) {
+          const { error: eA } = await supabase.from('clases_asistencia').insert({ grupo_id: grupoId, solicitud_id: sol.id, asistio: true })
+          if (eA) throw new Error('Alumno movido pero no se pudo registrar su asistencia: ' + eA.message)
+        }
+      }
+
+      // Traza cuando hay una clase realizada involucrada (append, nunca reemplaza).
+      if (moviendo && tocaRealizada(origen, destinoSel)) {
+        const cuando = `por ${nombreUsuario} el ${hoyFmt()}`
+        if (origen?.estado === 'realizada') {
+          await supabase.from('clases_grupos').update({
+            comentario: trazaGrupo(origen, `Participante ${sol.participanteNombre} movido a ${destinoSel ? etiquetaGrupo(destinoSel) : 'un grupo nuevo'} ${cuando}`),
+          }).eq('id', origen.id)
+        }
+        if (destinoRealizada) {
+          await supabase.from('clases_grupos').update({
+            comentario: trazaGrupo(destinoSel, `Participante ${sol.participanteNombre} recibido de ${origen ? etiquetaGrupo(origen) : 'otro grupo'} ${cuando}`),
+          }).eq('id', destinoSel.id)
+        }
+      }
+
+      // Si el origen quedó sin nadie, ofrecer eliminarlo en el mismo flujo
+      // (el caso típico: vaciar un grupo huérfano de un solo alumno).
+      let avisoExtra = ''
+      if (moviendo && origen && !corteBloqueado(origen) &&
+          rosterDe(origen.id).filter(r => r.id !== sol.id).length === 0) {
+        if (confirm(`El grupo de ${etiquetaGrupo(origen)} quedó sin participantes. ¿Eliminarlo?`)) {
+          const { error: eD } = await supabase.from('clases_grupos').delete().eq('id', origen.id)
+          if (eD) avisoExtra = ' (no se pudo eliminar el grupo vacío: ' + eD.message + ')'
+          else avisoExtra = ' y grupo vacío eliminado'
+        }
+      }
+
+      showToast((moviendo ? 'Alumno movido' : 'Solicitud agendada') + avisoExtra)
       setAgruparSol(null)
       loadFecha(fechaSel)
-      enviarAvisoHorario(grupoId, sol.socio_id)   // solo el socio recién agregado/movido (best-effort)
+      // Aviso de horario solo si la clase aún no ocurrió (best-effort).
+      if (!destinoRealizada) enviarAvisoHorario(grupoId, sol.socio_id)
     } catch (e) {
       showToast('Error al ' + (moviendo ? 'mover' : 'agrupar') + ': ' + e.message, 'error')
     }
@@ -421,6 +521,121 @@ export default function GestionarClases() {
     if (error) { showToast('Error al revertir: ' + error.message, 'error'); return }
     showToast('Clase revertida a agendada')
     loadFecha(fechaSel)
+  }
+
+  // ----- Quitar participante de un grupo -----
+  // La solicitud es la dueña del alumno: soltarla del grupo la devuelve a
+  // "pendiente", donde el flujo existente permite reasignarla o cancelarla.
+  const openQuitar = (sol, g) => {
+    const bloq = bloqueoPorCorte(g)
+    if (bloq) { showToast(bloq, 'error'); return }
+    if (tocaRealizada(g) && !esAdmin) { showToast('Esta clase ya está realizada: solo un administrador puede quitar participantes.', 'error'); return }
+    setQuitarSol({ sol, grupo: g })
+  }
+
+  const handleQuitarParticipante = async () => {
+    const { sol, grupo } = quitarSol
+    const bloq = bloqueoPorCorte(grupo)
+    if (bloq) { showToast(bloq, 'error'); setQuitarSol(null); return }
+    setGuardandoQuitar(true)
+    try {
+      const { error: eA } = await supabase.from('clases_asistencia').delete().eq('solicitud_id', sol.id).eq('grupo_id', grupo.id)
+      if (eA) throw new Error('No se pudo borrar su asistencia: ' + eA.message)
+
+      const { error: eS } = await supabase.from('clases_solicitudes').update({ grupo_id: null, estado: 'pendiente' }).eq('id', sol.id)
+      if (eS) throw new Error('No se pudo soltar al participante: ' + eS.message)
+
+      if (grupo.estado === 'realizada') {
+        await supabase.from('clases_grupos').update({
+          comentario: trazaGrupo(grupo, `Participante ${sol.participanteNombre} retirado por ${nombreUsuario} el ${hoyFmt()}`),
+        }).eq('id', grupo.id)
+      }
+
+      const quedan = rosterDe(grupo.id).filter(r => r.id !== sol.id).length
+      setQuitarSol(null)
+      if (quedan === 0) {
+        if (confirm(`${sol.participanteNombre} volvió a Solicitudes pendientes.\n\nEl grupo de ${etiquetaGrupo(grupo)} quedó sin participantes. ¿Eliminarlo?`)) {
+          const { error: eG } = await supabase.from('clases_grupos').delete().eq('id', grupo.id)
+          if (eG) showToast('Participante quitado, pero no se pudo eliminar el grupo vacío: ' + eG.message, 'error')
+          else showToast('Participante quitado y grupo vacío eliminado')
+        } else {
+          showToast('Participante quitado. El grupo quedó vacío.')
+        }
+      } else {
+        showToast(`${sol.participanteNombre} volvió a Solicitudes pendientes`)
+      }
+      loadFecha(fechaSel)
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+    setGuardandoQuitar(false)
+  }
+
+  // ----- Fusionar grupos -----
+  // Vuelca todos los participantes (y sus asistencias) en el grupo destino y
+  // elimina el origen. El destino conserva SU profesor y SU horario: nunca se
+  // resuelve automático, si queda sin profesor mantiene el badge "Por asignar".
+  const destinosFusionDe = (g) => grupos.filter(d =>
+    d.id !== g.id &&
+    !corteBloqueado(d) &&
+    (d.estado === 'agendada' || (esAdmin && d.estado === 'realizada')),
+  )
+
+  const openFusionar = (g) => {
+    const bloq = bloqueoPorCorte(g)
+    if (bloq) { showToast(bloq, 'error'); return }
+    if (tocaRealizada(g) && !esAdmin) { showToast('Esta clase ya está realizada: solo un administrador puede fusionarla.', 'error'); return }
+    setFusionarGrupo(g)
+    setFusionDestinoId('')
+  }
+
+  const handleFusionar = async () => {
+    const origen = fusionarGrupo
+    const destino = grupos.find(g => g.id === fusionDestinoId)
+    if (!destino) { showToast('Elige el grupo destino', 'error'); return }
+
+    const bloq = bloqueoPorCorte(origen, destino)
+    if (bloq) { showToast(bloq, 'error'); return }
+    if (tocaRealizada(origen, destino) && !esAdmin) {
+      showToast('Hay una clase ya realizada involucrada: solo un administrador puede fusionar.', 'error'); return
+    }
+
+    const difTipo = origen.tipo !== destino.tipo
+    const difHora = hhmm(origen.hora_inicio) !== hhmm(destino.hora_inicio) || hhmm(origen.hora_fin) !== hhmm(destino.hora_fin)
+    if (difTipo || difHora) {
+      const partes = []
+      if (difTipo) partes.push(`la disciplina es distinta (${labelTipo(origen.tipo)} → ${labelTipo(destino.tipo)})`)
+      if (difHora) partes.push(`el horario es distinto — queda ${hhmm(destino.hora_inicio)}–${hhmm(destino.hora_fin)}, el del destino`)
+      if (!confirm(`Atención: ${partes.join(' y ')}.\n\n¿Fusionar de todas formas?`)) return
+    }
+
+    setGuardandoFusion(true)
+    try {
+      const cuantos = rosterDe(origen.id).length
+      const destinoRealizada = destino.estado === 'realizada'
+
+      const { error: e1 } = await supabase.from('clases_solicitudes')
+        .update({ grupo_id: destino.id, estado: destinoRealizada ? 'realizada' : 'agendada' })
+        .eq('grupo_id', origen.id).neq('estado', 'cancelada')
+      if (e1) throw new Error('No se pudieron mover los participantes: ' + e1.message)
+
+      const { error: e2 } = await supabase.from('clases_asistencia').update({ grupo_id: destino.id }).eq('grupo_id', origen.id)
+      if (e2) throw new Error('Participantes movidos, pero no se pudieron mover las asistencias: ' + e2.message)
+
+      await supabase.from('clases_grupos').update({
+        comentario: trazaGrupo(destino, `Fusionado grupo ${etiquetaGrupo(origen)} por ${nombreUsuario} el ${hoyFmt()}`),
+      }).eq('id', destino.id)
+
+      const { error: e4 } = await supabase.from('clases_grupos').delete().eq('id', origen.id)
+      if (e4) throw new Error('Participantes movidos, pero no se pudo eliminar el grupo origen: ' + e4.message)
+
+      showToast(`Grupos fusionados · ${cuantos} participante${cuantos === 1 ? '' : 's'} movido${cuantos === 1 ? '' : 's'}`)
+      setFusionarGrupo(null)
+      loadFecha(fechaSel)
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+    setGuardandoFusion(false)
   }
 
   // ----- Registro retroactivo (solo admin) -----
@@ -668,9 +883,20 @@ export default function GestionarClases() {
                             {realizada && <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: 'rgba(29,158,117,0.15)', color: '#5dcaa5' }}>Realizada</span>}
                             {noRealizada && <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: 'rgba(163,45,45,0.15)', color: '#f09595' }}>No realizada</span>}
                             {!g.profesor_id && <BadgePorAsignar />}
+                            {corteBloqueado(g) && (
+                              <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: 'rgba(55,138,221,0.15)', color: '#85b7eb' }}
+                                title="Los participantes de esta clase ya no se pueden mover ni quitar">
+                                <i className="ti ti-lock" style={{ fontSize: 11 }}></i> Corte #{corteBloqueado(g).numero} {corteBloqueado(g).estado}
+                              </span>
+                            )}
                           </div>
                           {editable && (
                             <div style={{ display: 'flex', gap: 4 }}>
+                              <button className="btn btn-sm" disabled={!!corteBloqueado(g) || destinosFusionDe(g).length === 0}
+                                onClick={() => openFusionar(g)}
+                                title={corteBloqueado(g) ? 'El corte de esta clase ya está cerrado' : destinosFusionDe(g).length === 0 ? 'No hay otro grupo de esta fecha con el que fusionar' : 'Fusionar con otro grupo de esta fecha'}>
+                                <i className="ti ti-arrow-merge"></i>
+                              </button>
                               <button className="btn btn-sm" disabled={marcada} onClick={() => !marcada && openEditGrupo(g)}
                                 title={marcada ? 'Esta clase ya fue marcada como realizada. Desmárcala primero para editar.' : 'Editar grupo'}><i className="ti ti-edit"></i></button>
                               <button className="btn btn-sm btn-danger" disabled={marcada} onClick={() => !marcada && handleEliminarGrupo(g)}
@@ -697,6 +923,18 @@ export default function GestionarClases() {
                                 <span key={r.id} className="chip" style={{ fontSize: 11, opacity: fue ? 1 : 0.55, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                                   {r.participanteNombre}
                                   <i className={`ti ${fue ? 'ti-check' : 'ti-x'}`} style={{ fontSize: 11, color: fue ? '#5dcaa5' : '#f09595' }}></i>
+                                  {editable && (esAdmin || g.estado !== 'realizada') && !corteBloqueado(g) && (
+                                    <>
+                                      <button onClick={() => openAgrupar(r)} title="Mover a otro grupo"
+                                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center' }}>
+                                        <i className="ti ti-arrows-exchange" style={{ fontSize: 12 }}></i>
+                                      </button>
+                                      <button onClick={() => openQuitar(r, g)} title="Quitar del grupo"
+                                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#f09595', display: 'inline-flex', alignItems: 'center' }}>
+                                        <i className="ti ti-user-minus" style={{ fontSize: 12 }}></i>
+                                      </button>
+                                    </>
+                                  )}
                                   {puedeFeedback && (
                                     <button onClick={() => openFeedback(r, g)} title="Escribir feedback"
                                       style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--gold-light)', display: 'inline-flex', alignItems: 'center' }}>
@@ -713,10 +951,16 @@ export default function GestionarClases() {
                               <span key={r.id} className="chip" style={{ fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
                                 {r.participanteNombre}
                                 {editable && (
-                                  <button onClick={() => openAgrupar(r)} title="Mover a otro grupo"
-                                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center' }}>
-                                    <i className="ti ti-arrows-exchange" style={{ fontSize: 12 }}></i>
-                                  </button>
+                                  <>
+                                    <button onClick={() => openAgrupar(r)} title="Mover a otro grupo"
+                                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center' }}>
+                                      <i className="ti ti-arrows-exchange" style={{ fontSize: 12 }}></i>
+                                    </button>
+                                    <button onClick={() => openQuitar(r, g)} title="Quitar del grupo"
+                                      style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: '#f09595', display: 'inline-flex', alignItems: 'center' }}>
+                                      <i className="ti ti-user-minus" style={{ fontSize: 12 }}></i>
+                                    </button>
+                                  </>
                                 )}
                                 {puedeFeedback && (
                                   <button onClick={() => openFeedback(r, g)} title="Escribir feedback"
@@ -819,7 +1063,10 @@ export default function GestionarClases() {
                     <label key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: `0.5px solid ${agruparGrupoId === g.id ? 'var(--gold)' : 'var(--border)'}`, borderRadius: 8, cursor: 'pointer' }}>
                       <input type="radio" name="grupo" checked={agruparGrupoId === g.id} onChange={() => setAgruparGrupoId(g.id)} />
                       <span style={{ fontSize: 13, color: '#c8d0dc' }}>{hhmm(g.hora_inicio)}–{hhmm(g.hora_fin)}</span>
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>· {rosterDe(g.id).length} est. · {g.clases_profesores?.nombre || 'sin profesor'}</span>
+                      <TipoBadge tipo={g.tipo} />
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                        · {rosterDe(g.id).length} est. · {g.clases_profesores?.nombre || 'sin profesor'}{g.estado === 'realizada' ? ' · realizada' : ''}
+                      </span>
                     </label>
                   ))}
                 </div>
@@ -1017,6 +1264,86 @@ export default function GestionarClases() {
                 <button className="btn" onClick={handleConfirmarMarcar} disabled={guardandoMarcar}
                   style={{ background: algunoAsistio ? 'var(--green, #1d9e75)' : 'transparent', color: algunoAsistio ? '#fff' : '#fac775', borderColor: algunoAsistio ? 'transparent' : 'rgba(239,159,39,0.5)', fontWeight: 600 }}>
                   {guardandoMarcar ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-check"></i> {algunoAsistio ? 'Confirmar realizada' : 'Confirmar no realizada'}</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Modal Quitar participante */}
+      {quitarSol && (() => {
+        const { sol, grupo } = quitarSol
+        const ultimo = rosterDe(grupo.id).filter(r => r.id !== sol.id).length === 0
+        return (
+          <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setQuitarSol(null)}>
+            <div className="modal" style={{ width: 480 }}>
+              <div className="modal-header">
+                <div className="modal-title">Quitar participante</div>
+                <button className="btn btn-sm" onClick={() => setQuitarSol(null)}><i className="ti ti-x"></i></button>
+              </div>
+              <div style={{ padding: '0.5rem 1.25rem 1rem', fontSize: 13, color: '#c8d0dc', fontFamily: 'sans-serif' }}>
+                Vas a sacar a <strong>{sol.participanteNombre}</strong> del grupo de {etiquetaGrupo(grupo)}.
+                <ul style={{ margin: '10px 0 0', paddingLeft: 18, fontSize: 12, color: 'var(--text-muted)' }}>
+                  <li>Vuelve a <strong>Solicitudes pendientes</strong>, donde puedes reasignarlo o cancelarlo.</li>
+                  {grupo.estado === 'realizada' && <li>Se borra su asistencia y queda traza en el comentario del grupo.</li>}
+                  {ultimo && <li style={{ color: '#fac775' }}>Es el último participante: te preguntaré si quieres eliminar el grupo.</li>}
+                </ul>
+              </div>
+              <div className="modal-footer">
+                <button className="btn" onClick={() => setQuitarSol(null)}>Cancelar</button>
+                <button className="btn btn-danger" onClick={handleQuitarParticipante} disabled={guardandoQuitar}>
+                  {guardandoQuitar ? <><i className="ti ti-loader"></i> Quitando…</> : <><i className="ti ti-user-minus"></i> Quitar del grupo</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* Modal Fusionar grupos */}
+      {fusionarGrupo && (() => {
+        const destinos = destinosFusionDe(fusionarGrupo)
+        const sel = destinos.find(d => d.id === fusionDestinoId) || null
+        return (
+          <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setFusionarGrupo(null)}>
+            <div className="modal" style={{ width: 520, maxWidth: '95vw' }}>
+              <div className="modal-header">
+                <div className="modal-title">Fusionar grupo</div>
+                <button className="btn btn-sm" onClick={() => setFusionarGrupo(null)}><i className="ti ti-x"></i></button>
+              </div>
+              <div style={{ padding: '0.5rem 1.25rem 0.75rem', fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                Los {rosterDe(fusionarGrupo.id).length} participante(s) de <strong style={{ color: '#c8d0dc' }}>{etiquetaGrupo(fusionarGrupo)}</strong> pasan al grupo que elijas, y este grupo se elimina.
+                El destino conserva su horario y su profesor.
+              </div>
+              <div style={{ padding: '0 1.25rem 1rem' }}>
+                {destinos.length === 0 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>No hay otro grupo de esta fecha con el que fusionar.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {destinos.map(d => (
+                      <label key={d.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: `0.5px solid ${fusionDestinoId === d.id ? 'var(--gold)' : 'var(--border)'}`, borderRadius: 8, cursor: 'pointer' }}>
+                        <input type="radio" name="fusion" checked={fusionDestinoId === d.id} onChange={() => setFusionDestinoId(d.id)} />
+                        <span style={{ fontSize: 13, color: '#c8d0dc' }}>{hhmm(d.hora_inicio)}–{hhmm(d.hora_fin)}</span>
+                        <TipoBadge tipo={d.tipo} />
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                          · {rosterDe(d.id).length} est. · {d.clases_profesores?.nombre || 'sin profesor'}{d.estado === 'realizada' ? ' · realizada' : ''}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                {sel && (sel.tipo !== fusionarGrupo.tipo || hhmm(sel.hora_inicio) !== hhmm(fusionarGrupo.hora_inicio) || hhmm(sel.hora_fin) !== hhmm(fusionarGrupo.hora_fin)) && (
+                  <div style={{ marginTop: 10, padding: '0.6rem 0.8rem', borderRadius: 8, fontSize: 11, fontFamily: 'sans-serif', background: 'rgba(239,159,39,0.1)', border: '0.5px solid rgba(239,159,39,0.3)', color: '#fac775' }}>
+                    <i className="ti ti-alert-triangle"></i> {sel.tipo !== fusionarGrupo.tipo ? `Disciplinas distintas (${labelTipo(fusionarGrupo.tipo)} → ${labelTipo(sel.tipo)}). ` : ''}
+                    El grupo resultante queda en {hhmm(sel.hora_inicio)}–{hhmm(sel.hora_fin)}{sel.clases_profesores?.nombre ? ` con ${sel.clases_profesores.nombre}` : ' sin profesor asignado'}.
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn" onClick={() => setFusionarGrupo(null)}>Cancelar</button>
+                <button className="btn btn-primary" onClick={handleFusionar} disabled={guardandoFusion || !fusionDestinoId}>
+                  {guardandoFusion ? <><i className="ti ti-loader"></i> Fusionando…</> : <><i className="ti ti-arrow-merge"></i> Fusionar</>}
                 </button>
               </div>
             </div>
