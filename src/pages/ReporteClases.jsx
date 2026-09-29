@@ -167,8 +167,12 @@ export default function ReporteClases() {
   const corte = cortes.find(c => c.id === corteSelId)
   const realizadas = grupos.filter(g => g.estado === 'realizada')
   const noRealizadas = grupos.filter(g => g.estado === 'no_realizada')
+  // Un grupo sin profesor no se le puede cobrar a nadie: queda fuera de horas y
+  // monto hasta que Andacor lo asigne. Las asistencias sí cuentan (el alumno fue).
+  const pendientesAsignacion = realizadas.filter(g => !g.profesor_id)
+  const cobrables = realizadas.filter(g => g.profesor_id)
   const tarifa = corte ? (corte.estado === 'abierto' ? (config.tarifa_hora_profesor || 0) : (corte.tarifa_snapshot ?? 0)) : 0
-  const horas = realizadas.reduce((t, g) => t + duracionHorasDe(g), 0)
+  const horas = cobrables.reduce((t, g) => t + duracionHorasDe(g), 0)
   const asistencias = realizadas.reduce((t, g) => t + (asisPorGrupo[g.id]?.asistieron || 0), 0)
   const ajuste = corte?.ajuste || 0
   const montoCalc = corte && corte.estado !== 'abierto' ? (corte.monto_calculado || 0) : Math.round(horas * tarifa)
@@ -177,11 +181,11 @@ export default function ReporteClases() {
 
   // Por disciplina
   const porDisc = ['esqui', 'snowboard'].map(tipo => {
-    const gs = realizadas.filter(g => g.tipo === tipo)
+    const gs = cobrables.filter(g => g.tipo === tipo)
     return { tipo, horas: gs.reduce((t, g) => t + duracionHorasDe(g), 0), asist: gs.reduce((t, g) => t + (asisPorGrupo[g.id]?.asistieron || 0), 0), clases: gs.length }
   })
   // Por profesor
-  const porProf = Object.values(realizadas.reduce((acc, g) => {
+  const porProf = Object.values(cobrables.reduce((acc, g) => {
     const key = g.profesor_id || 'sin'
     if (!acc[key]) acc[key] = { nombre: g.clases_profesores?.nombre || 'Sin asignar', horas: 0, monto: 0, clases: 0 }
     acc[key].horas += duracionHorasDe(g)
@@ -290,11 +294,11 @@ export default function ReporteClases() {
         Fecha: fmtFecha(g.fecha),
         Horario: `${hhmm(g.hora_inicio)}-${hhmm(g.hora_fin)}`,
         Tipo: g.tipo === 'snowboard' ? 'Snowboard' : 'Esquí',
-        Profesor: g.clases_profesores?.nombre || 'Sin asignar',
+        Profesor: g.profesor_id ? (g.clases_profesores?.nombre || 'Sin asignar') : 'POR ASIGNAR (no cobrada)',
         Asistencias: asisPorGrupo[g.id]?.asistieron || 0,
         Total: asisPorGrupo[g.id]?.total || 0,
-        'Horas-profesor': duracionHorasDe(g),
-        Monto: montoClase(g),
+        'Horas-profesor': g.profesor_id ? duracionHorasDe(g) : 0,
+        Monto: g.profesor_id ? montoClase(g) : 0,
       }))
       rows.push({})
       rows.push({ Fecha: 'TOTAL', 'Horas-profesor': horas, Monto: montoCalc })
@@ -397,7 +401,9 @@ export default function ReporteClases() {
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 {corte.estado === 'abierto' && editable && (
-                  <button className="btn btn-sm btn-primary" onClick={() => { setFechaFin(hoyISO()); setShowCerrar(true) }}><i className="ti ti-lock"></i> Cerrar corte</button>
+                  <button className="btn btn-sm btn-primary" disabled={pendientesAsignacion.length > 0}
+                    title={pendientesAsignacion.length > 0 ? `Hay ${pendientesAsignacion.length} clase(s) sin profesor asignado. Asígnalos antes de cerrar.` : 'Cerrar corte'}
+                    onClick={() => { if (pendientesAsignacion.length === 0) { setFechaFin(hoyISO()); setShowCerrar(true) } }}><i className="ti ti-lock"></i> Cerrar corte</button>
                 )}
                 {corte.estado === 'cerrado' && esAdmin && (
                   <>
@@ -433,6 +439,36 @@ export default function ReporteClases() {
               </div>
             ))}
           </div>
+
+          {/* Pendientes de asignación: bloquean el cierre y no suman al cobro */}
+          {pendientesAsignacion.length > 0 && (
+            <div className="card" style={{ marginBottom: '1rem', border: '0.5px solid rgba(239,159,39,0.35)' }}>
+              <div className="card-header">
+                <div className="card-title" style={{ color: '#fac775' }}>
+                  <i className="ti ti-user-question"></i> Pendientes de asignación ({pendientesAsignacion.length})
+                </div>
+              </div>
+              <div style={{ padding: '0 1.5rem 0.75rem', fontSize: 12, color: '#fac775', fontFamily: 'sans-serif' }}>
+                Estas clases están realizadas pero sin profesor. No suman horas ni monto al corte, y{' '}
+                {corte.estado === 'abierto' ? 'el corte no se puede cerrar hasta asignarlos' : 'quedaron fuera del cálculo del corte'}.
+                Se asignan desde Gestión Escuela → Gestionar clases.
+              </div>
+              <table>
+                <thead><tr><th>Fecha</th><th>Horario</th><th>Tipo</th><th>Asistencias</th><th>h-prof sin contar</th></tr></thead>
+                <tbody>
+                  {pendientesAsignacion.map(g => (
+                    <tr key={g.id}>
+                      <td style={{ color: 'var(--text-muted)' }}>{fmtFecha(g.fecha)}</td>
+                      <td style={{ color: 'var(--text-muted)' }}>{hhmm(g.hora_inicio)}–{hhmm(g.hora_fin)}</td>
+                      <td><TipoBadge tipo={g.tipo} /></td>
+                      <td style={{ color: 'var(--text-muted)' }}>{asisPorGrupo[g.id]?.asistieron || 0}</td>
+                      <td style={{ color: '#fac775' }}>{fmtHoras(duracionHorasDe(g))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Banner no realizadas */}
           {noRealizadas.length > 0 && (
@@ -542,10 +578,14 @@ export default function ReporteClases() {
                         <td style={{ color: 'var(--text-muted)' }}>{fmtFecha(g.fecha)}</td>
                         <td style={{ color: 'var(--text-muted)' }}>{hhmm(g.hora_inicio)}–{hhmm(g.hora_fin)}</td>
                         <td><TipoBadge tipo={g.tipo} /></td>
-                        <td style={{ color: '#c8d0dc' }}>{g.clases_profesores?.nombre || '—'}</td>
+                        <td style={{ color: '#c8d0dc' }}>
+                          {g.profesor_id
+                            ? (g.clases_profesores?.nombre || '—')
+                            : <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: 'rgba(239,159,39,0.15)', color: '#fac775' }}>Profesor por asignar</span>}
+                        </td>
                         <td style={{ color: 'var(--text-muted)' }}>{a.asistieron}/{a.total}</td>
-                        <td style={{ color: 'var(--text-muted)' }}>{fmtHoras(duracionHorasDe(g))}</td>
-                        {!esAndacor && <td style={{ color: '#5dcaa5', fontWeight: 'bold' }}>{formatearMontoConSimbolo(montoClase(g))}</td>}
+                        <td style={{ color: g.profesor_id ? 'var(--text-muted)' : 'var(--text-dim)' }}>{fmtHoras(duracionHorasDe(g))}{!g.profesor_id && ' *'}</td>
+                        {!esAndacor && <td style={{ color: g.profesor_id ? '#5dcaa5' : 'var(--text-dim)', fontWeight: 'bold' }}>{g.profesor_id ? formatearMontoConSimbolo(montoClase(g)) : '—'}</td>}
                       </tr>
                     )
                   })}

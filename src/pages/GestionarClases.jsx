@@ -14,6 +14,9 @@ const fmtDiaFecha = (iso) => {
   return `${DIAS[dt.getDay()]} ${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
 }
 const hhmm = (t) => (t || '').slice(0, 5)
+// Comparación y formato sobre el ISO crudo: nunca new Date('YYYY-MM-DD').
+const esFechaPasada = (iso) => !!iso && iso < hoyISO()
+const fmtDDMMYYYY = (iso) => (iso ? iso.split('-').reverse().join('/') : '')
 // Duración en horas derivada de hora_inicio/hora_fin (no hay campo duración).
 const duracionHorasDe = (g) => {
   const toMin = (t) => { const [h, m] = (t || '').split(':').map(Number); return (h || 0) * 60 + (m || 0) }
@@ -29,12 +32,24 @@ const TipoBadge = ({ tipo }) => (
 )
 
 const EMPTY_GRUPO = { hora_inicio: '10:00', hora_fin: '12:00', profesor_id: '', comentario: '' }
+const EMPTY_RETRO = { fecha: '', tipo: 'esqui', hora_inicio: '10:00', hora_fin: '12:00', profesor_id: '', comentario: '', notas: '', marcarRealizada: true }
+
+const BadgePorAsignar = () => (
+  <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: 'rgba(239,159,39,0.15)', color: '#fac775' }}>
+    <i className="ti ti-user-question" style={{ fontSize: 11 }}></i> Profesor por asignar
+  </span>
+)
 
 export default function GestionarClases() {
   const { showToast, ToastComponent } = useToast()
   const { puedeEditar, user } = useAuth()
   const editable = puedeEditar('clases_gestion')
   const puedeFeedback = puedeEditar('clases_bitacora')   // admin/andacor: escribir bitácora
+  // Registro retroactivo: solo admin. Asignar profesor a un grupo "por asignar":
+  // admin y andacor (andacor completa después lo que el admin dejó pendiente).
+  const esAdmin = user?.rol === 'admin'
+  const puedeAsignarProfesor = esAdmin || user?.rol === 'andacor'
+  const nombreUsuario = user?.nombre || user?.username || 'usuario'
 
   // Feedback (bitácora): alumno + contexto de la clase para el formulario reutilizable
   const [feedbackCtx, setFeedbackCtx] = useState(null)   // { alumno, fecha, grupoId }
@@ -75,6 +90,20 @@ export default function GestionarClases() {
   const [dividirSel, setDividirSel] = useState({})         // solicitud_id -> bool (van al grupo nuevo)
   const [dividirForm, setDividirForm] = useState(EMPTY_GRUPO)
   const [guardandoDividir, setGuardandoDividir] = useState(false)
+
+  // Registro retroactivo (admin)
+  const [showRetro, setShowRetro] = useState(false)
+  const [retroForm, setRetroForm] = useState(EMPTY_RETRO)
+  const [retroSel, setRetroSel] = useState({})      // 'tipo:id' -> true
+  const [retroBusca, setRetroBusca] = useState('')
+  const [guardandoRetro, setGuardandoRetro] = useState(false)
+  const [sociosTodos, setSociosTodos] = useState([])
+  const [beneficiariosTodos, setBeneficiariosTodos] = useState([])
+
+  // Asignar profesor a un grupo sin profesor
+  const [asignarGrupo, setAsignarGrupo] = useState(null)
+  const [asignarProfId, setAsignarProfId] = useState('')
+  const [guardandoAsignar, setGuardandoAsignar] = useState(false)
 
   const nivelNombre = (id) => niveles.find(n => n.id === id)?.nombre || '—'
 
@@ -263,6 +292,7 @@ export default function GestionarClases() {
     try {
       let grupoId = agruparGrupoId
       if (agruparModo === 'nuevo') {
+        if (esFechaPasada(sol.fecha) && !esAdmin) { showToast('Solo un administrador puede crear clases en fechas pasadas.', 'error'); setGuardandoAgrupar(false); return }
         if (!nuevoGrupo.hora_inicio || !nuevoGrupo.hora_fin) { showToast('Indica hora de inicio y fin', 'error'); setGuardandoAgrupar(false); return }
         const conflicto = detectarConflictoProfesor({ profesorId: nuevoGrupo.profesor_id || null, horaIni: nuevoGrupo.hora_inicio, horaFin: nuevoGrupo.hora_fin, fecha: sol.fecha })
         if (conflicto) { showToast(msgConflicto(conflicto), 'error'); setGuardandoAgrupar(false); return }
@@ -328,6 +358,7 @@ export default function GestionarClases() {
   const toggleDividirSel = (solId) => setDividirSel(prev => ({ ...prev, [solId]: !prev[solId] }))
 
   const handleConfirmarDividir = async () => {
+    if (esFechaPasada(dividirGrupo?.fecha) && !esAdmin) { showToast('Solo un administrador puede crear clases en fechas pasadas.', 'error'); return }
     const g = dividirGrupo
     const roster = rosterDe(g.id)
     const seleccionados = roster.filter(r => dividirSel[r.id])
@@ -392,6 +423,143 @@ export default function GestionarClases() {
     loadFecha(fechaSel)
   }
 
+  // ----- Registro retroactivo (solo admin) -----
+  // Clases que se realizaron pero nunca se registraron: generan diferencias con
+  // el cobro de Andacor. Crea grupo + participantes y (opcional) la marca
+  // realizada en una sola pasada, dejando traza en el comentario.
+  const openRetro = async () => {
+    setRetroForm({
+      ...EMPTY_RETRO,
+      fecha: esFechaPasada(fechaSel) ? fechaSel : hoyISO(),
+      comentario: `Registro retroactivo ${fmtDDMMYYYY(hoyISO())} por ${nombreUsuario}`,
+    })
+    setRetroSel({})
+    setRetroBusca('')
+    setShowRetro(true)
+    if (sociosTodos.length === 0) {
+      const [{ data: socs }, { data: bens }] = await Promise.all([
+        supabase.from('socios').select('id,nombre,apellido,numero_socio').order('numero_socio'),
+        supabase.from('beneficiarios').select('id,socio_id,nombre,apellido,estado').order('nombre'),
+      ])
+      setSociosTodos(socs || [])
+      setBeneficiariosTodos(bens || [])
+    }
+  }
+
+  const retroParticipantes = sociosTodos.flatMap(s => [
+    { key: `socio:${s.id}`, tipo: 'socio', id: s.id, socio_id: s.id, nombre: `${s.nombre} ${s.apellido}`, sub: `${s.numero_socio} · titular` },
+    ...beneficiariosTodos.filter(b => b.socio_id === s.id && b.estado === 'vigente').map(b => ({
+      key: `beneficiario:${b.id}`, tipo: 'beneficiario', id: b.id, socio_id: s.id,
+      nombre: `${b.nombre} ${b.apellido}`, sub: `${s.numero_socio} · ${s.nombre} ${s.apellido}`,
+    })),
+  ])
+  const retroFiltrados = retroBusca.trim()
+    ? retroParticipantes.filter(p => `${p.nombre} ${p.sub}`.toLowerCase().includes(retroBusca.trim().toLowerCase()))
+    : retroParticipantes
+  const retroSeleccionados = retroParticipantes.filter(p => retroSel[p.key])
+  const retroFechaHabilitada = disponibilidad.some(d => d.fecha === retroForm.fecha)
+
+  const handleGuardarRetro = async () => {
+    const f = retroForm
+    if (!esAdmin) { showToast('Solo un administrador puede registrar clases retroactivas', 'error'); return }
+    if (!f.fecha) { showToast('Indica la fecha de la clase', 'error'); return }
+    if (!f.hora_inicio || !f.hora_fin) { showToast('Indica hora de inicio y fin', 'error'); return }
+    if (f.hora_fin <= f.hora_inicio) { showToast('La hora de fin debe ser posterior a la de inicio', 'error'); return }
+    if (retroSeleccionados.length === 0) { showToast('Selecciona al menos un participante', 'error'); return }
+    if (!retroFechaHabilitada && !f.notas.trim()) { showToast('Para habilitar esta fecha necesitas escribir una nota que lo justifique', 'error'); return }
+
+    setGuardandoRetro(true)
+    try {
+      // 1. Habilitar la fecha si no estaba. Sin aviso por correo: es una fecha pasada.
+      if (!retroFechaHabilitada) {
+        const { error } = await supabase.from('clases_disponibilidad')
+          .insert({ fecha: f.fecha, notas: f.notas.trim(), created_by: user?.id || null })
+        if (error && error.code !== '23505') throw new Error('No se pudo habilitar la fecha: ' + error.message)
+      }
+
+      // 2. Un participante no puede quedar dos veces en el mismo día y disciplina.
+      const { data: dups } = await supabase.from('clases_solicitudes')
+        .select('participante_id').eq('fecha', f.fecha).eq('tipo', f.tipo)
+        .in('participante_id', retroSeleccionados.map(p => p.id))
+        .in('estado', ['pendiente', 'agendada', 'realizada'])
+      if (dups?.length) {
+        const nom = retroSeleccionados.find(p => p.id === dups[0].participante_id)?.nombre || 'Un participante'
+        throw new Error(`${nom} ya tiene una clase de ${f.tipo === 'snowboard' ? 'snowboard' : 'esquí'} registrada el ${fmtDDMMYYYY(f.fecha)}`)
+      }
+
+      // 3. Solape de profesor en esa fecha (los grupos del estado local son de otra fecha).
+      if (f.profesor_id) {
+        const { data: otros } = await supabase.from('clases_grupos')
+          .select('*, clases_profesores(nombre)').eq('fecha', f.fecha).eq('profesor_id', f.profesor_id)
+          .in('estado', ['agendada', 'realizada', 'no_realizada'])
+        const toMin = (t) => { const [h, m] = (t || '').split(':'); return (+h) * 60 + (+m || 0) }
+        const ch = (otros || []).find(g => toMin(g.hora_inicio) < toMin(f.hora_fin) && toMin(f.hora_inicio) < toMin(g.hora_fin))
+        if (ch) throw new Error(msgConflicto(ch))
+      }
+
+      // 4. Grupo
+      const { data: grupo, error: eG } = await supabase.from('clases_grupos').insert({
+        fecha: f.fecha, hora_inicio: f.hora_inicio, hora_fin: f.hora_fin, tipo: f.tipo,
+        profesor_id: f.profesor_id || null, comentario: f.comentario || null, estado: 'agendada',
+      }).select().single()
+      if (eG) throw new Error('No se pudo crear la clase: ' + eG.message)
+
+      // 5. Participantes, ya agendados al grupo. Si falla, se borra el grupo.
+      const filas = retroSeleccionados.map(p => ({
+        socio_id: p.socio_id, participante_tipo: p.tipo, participante_id: p.id,
+        fecha: f.fecha, tipo: f.tipo, grupo_id: grupo.id, estado: 'agendada',
+      }))
+      const { data: solsCreadas, error: eS } = await supabase.from('clases_solicitudes').insert(filas).select('id')
+      if (eS) {
+        await supabase.from('clases_grupos').delete().eq('id', grupo.id)
+        throw new Error('No se pudo inscribir a los participantes; la clase fue revertida: ' + eS.message)
+      }
+
+      // 6. Marcar realizada. Si falla, el grupo queda agendada y se puede marcar a mano.
+      if (f.marcarRealizada) {
+        const { error: eM } = await supabase.rpc('marcar_clase_realizada', {
+          p_grupo_id: grupo.id,
+          p_asistencias: (solsCreadas || []).map(x => ({ solicitud_id: x.id, asistio: true, comentario: null })),
+          p_usuario_id: user?.id || null,
+        })
+        if (eM) showToast('Clase registrada, pero no se pudo marcar como realizada: ' + eM.message, 'error')
+        else showToast('Clase retroactiva registrada y marcada como realizada')
+      } else {
+        showToast('Clase retroactiva registrada')
+      }
+
+      setShowRetro(false)
+      const { data: disp } = await supabase.from('clases_disponibilidad').select('*').order('fecha')
+      setDisponibilidad(disp || [])
+      if (fechaSel === f.fecha) loadFecha(f.fecha)
+      else setFechaSel(f.fecha)
+    } catch (e) {
+      showToast(e.message, 'error')
+    }
+    setGuardandoRetro(false)
+  }
+
+  // ----- Asignar profesor a un grupo "por asignar" (admin y andacor) -----
+  const openAsignar = (g) => { setAsignarGrupo(g); setAsignarProfId('') }
+  const handleAsignarProfesor = async () => {
+    const g = asignarGrupo
+    if (!asignarProfId) { showToast('Elige un profesor', 'error'); return }
+    const conflicto = detectarConflictoProfesor({ profesorId: asignarProfId, horaIni: hhmm(g.hora_inicio), horaFin: hhmm(g.hora_fin), fecha: g.fecha, excludeId: g.id })
+    if (conflicto) { showToast(msgConflicto(conflicto), 'error'); return }
+    setGuardandoAsignar(true)
+    // Traza de auditoría: se agrega al comentario, nunca lo reemplaza.
+    const traza = `Profesor asignado por ${nombreUsuario} el ${fmtDDMMYYYY(hoyISO())}`
+    const { error } = await supabase.from('clases_grupos').update({
+      profesor_id: asignarProfId,
+      comentario: g.comentario ? `${g.comentario}\n${traza}` : traza,
+    }).eq('id', g.id)
+    setGuardandoAsignar(false)
+    if (error) { showToast('Error al asignar profesor: ' + error.message, 'error'); return }
+    showToast('Profesor asignado')
+    setAsignarGrupo(null)
+    loadFecha(fechaSel)
+  }
+
   const gruposDestino = agruparSol ? gruposDestinoDe(agruparSol) : []
   const esMover = !!agruparSol?.grupo_id
 
@@ -416,6 +584,11 @@ export default function GestionarClases() {
             <select value={fechaSel} onChange={e => setFechaSel(e.target.value)} style={{ width: 'auto', fontSize: 13 }}>
               {disponibilidad.map(d => <option key={d.id} value={d.fecha}>{fmtDiaFecha(d.fecha)}</option>)}
             </select>
+            {esAdmin && (
+              <button className="btn btn-sm" onClick={openRetro} title="Registrar una clase que ya se realizó y no quedó registrada">
+                <i className="ti ti-calendar-plus"></i> Registrar clase retroactiva
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -423,6 +596,15 @@ export default function GestionarClases() {
       {!editable && (
         <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif', marginBottom: 8 }}>
           <i className="ti ti-eye"></i> Modo solo lectura.
+        </div>
+      )}
+
+      {editable && esFechaPasada(fechaSel) && (
+        <div style={{ padding: '0.6rem 0.9rem', borderRadius: 8, fontSize: 12, fontFamily: 'sans-serif', marginBottom: 8, background: 'rgba(239,159,39,0.1)', border: '0.5px solid rgba(239,159,39,0.3)', color: '#fac775' }}>
+          <i className="ti ti-history"></i> Fecha pasada.{' '}
+          {esAdmin
+            ? 'Puedes registrar clases y marcar asistencia de forma retroactiva; queda traza en el comentario del grupo.'
+            : 'Solo un administrador puede crear clases nuevas en fechas pasadas.'}
         </div>
       )}
 
@@ -485,6 +667,7 @@ export default function GestionarClases() {
                             <TipoBadge tipo={g.tipo} />
                             {realizada && <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: 'rgba(29,158,117,0.15)', color: '#5dcaa5' }}>Realizada</span>}
                             {noRealizada && <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 4, background: 'rgba(163,45,45,0.15)', color: '#f09595' }}>No realizada</span>}
+                            {!g.profesor_id && <BadgePorAsignar />}
                           </div>
                           {editable && (
                             <div style={{ display: 'flex', gap: 4 }}>
@@ -543,6 +726,17 @@ export default function GestionarClases() {
                                 )}
                               </span>
                             ))}
+                          </div>
+                        )}
+
+                        {!g.profesor_id && puedeAsignarProfesor && (
+                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '0.5px solid rgba(239,159,39,0.2)' }}>
+                            <button className="btn btn-sm" style={{ fontSize: 11, color: '#fac775', borderColor: 'rgba(239,159,39,0.4)' }} onClick={() => openAsignar(g)}>
+                              <i className="ti ti-user-plus"></i> Asignar profesor
+                            </button>
+                            <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginLeft: 8 }}>
+                              No suma horas al corte hasta asignarlo.
+                            </span>
                           </div>
                         )}
 
@@ -635,7 +829,7 @@ export default function GestionarClases() {
                   <div className="form-group"><label>Hora fin</label><input type="time" value={nuevoGrupo.hora_fin} onChange={e => setNuevoGrupo(f => ({ ...f, hora_fin: e.target.value }))} /></div>
                   <div className="form-group full"><label>Profesor</label>
                     <select value={nuevoGrupo.profesor_id} onChange={e => setNuevoGrupo(f => ({ ...f, profesor_id: e.target.value }))}>
-                      <option value="">— sin asignar —</option>
+                      <option value="">Por asignar</option>
                       {profesores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                     </select>
                   </div>
@@ -666,7 +860,7 @@ export default function GestionarClases() {
               <div className="form-group"><label>Hora fin</label><input type="time" value={formEdit.hora_fin} onChange={e => setFormEdit(f => ({ ...f, hora_fin: e.target.value }))} /></div>
               <div className="form-group full"><label>Profesor</label>
                 <select value={formEdit.profesor_id} onChange={e => setFormEdit(f => ({ ...f, profesor_id: e.target.value }))}>
-                  <option value="">— sin asignar —</option>
+                  <option value="">Por asignar</option>
                   {profesores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                 </select>
               </div>
@@ -727,7 +921,7 @@ export default function GestionarClases() {
                   <div className="form-group"><label>Hora fin</label><input type="time" value={dividirForm.hora_fin} onChange={e => setDividirForm(f => ({ ...f, hora_fin: e.target.value }))} /></div>
                   <div className="form-group full"><label>Profesor</label>
                     <select value={dividirForm.profesor_id} onChange={e => setDividirForm(f => ({ ...f, profesor_id: e.target.value }))}>
-                      <option value="">— sin asignar —</option>
+                      <option value="">Por asignar</option>
                       {profesores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                     </select>
                   </div>
@@ -829,6 +1023,130 @@ export default function GestionarClases() {
           </div>
         )
       })()}
+
+      {/* Modal Asignar profesor */}
+      {asignarGrupo && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setAsignarGrupo(null)}>
+          <div className="modal" style={{ width: 460 }}>
+            <div className="modal-header">
+              <div className="modal-title">Asignar profesor</div>
+              <button className="btn btn-sm" onClick={() => setAsignarGrupo(null)}><i className="ti ti-x"></i></button>
+            </div>
+            <div style={{ padding: '0 1.25rem 0.5rem', fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+              {fmtDiaFecha(asignarGrupo.fecha)} · {hhmm(asignarGrupo.hora_inicio)}–{hhmm(asignarGrupo.hora_fin)} · {asignarGrupo.tipo === 'snowboard' ? 'Snowboard' : 'Esquí'}
+              <div style={{ marginTop: 4 }}>Al asignarlo, la clase pasa a sumar <strong style={{ color: 'var(--gold-light)' }}>{labelHoras(duracionHorasDe(asignarGrupo))}</strong> al corte.</div>
+            </div>
+            <div className="form-grid">
+              <div className="form-group full"><label>Profesor *</label>
+                <select value={asignarProfId} onChange={e => setAsignarProfId(e.target.value)}>
+                  <option value="">Seleccionar…</option>
+                  {profesores.map(pr => <option key={pr.id} value={pr.id}>{pr.nombre}</option>)}
+                </select>
+              </div>
+            </div>
+            <div style={{ padding: '0 1.25rem 0.5rem', fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+              Se registrará en el comentario: "Profesor asignado por {nombreUsuario} el {fmtDDMMYYYY(hoyISO())}".
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setAsignarGrupo(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleAsignarProfesor} disabled={guardandoAsignar || !asignarProfId}>
+                {guardandoAsignar ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-user-plus"></i> Asignar</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Registrar clase retroactiva (admin) */}
+      {showRetro && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setShowRetro(false)}>
+          <div className="modal" style={{ width: 660, maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="modal-header">
+              <div className="modal-title">Registrar clase retroactiva</div>
+              <button className="btn btn-sm" onClick={() => setShowRetro(false)}><i className="ti ti-x"></i></button>
+            </div>
+            <div style={{ padding: '0 1.25rem 0.5rem', fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+              Para clases que se realizaron y no quedaron registradas. Se inscriben los participantes y, si lo marcas, la clase queda realizada y entra al corte abierto.
+            </div>
+            <div className="form-grid">
+              <div className="form-group"><label>Fecha de la clase *</label>
+                <input type="date" value={retroForm.fecha} onChange={e => setRetroForm(f => ({ ...f, fecha: e.target.value }))} />
+              </div>
+              <div className="form-group"><label>Disciplina</label>
+                <select value={retroForm.tipo} onChange={e => setRetroForm(f => ({ ...f, tipo: e.target.value }))}>
+                  <option value="esqui">Esquí</option>
+                  <option value="snowboard">Snowboard</option>
+                </select>
+              </div>
+              <div className="form-group"><label>Hora inicio *</label>
+                <input type="time" value={retroForm.hora_inicio} onChange={e => setRetroForm(f => ({ ...f, hora_inicio: e.target.value }))} />
+              </div>
+              <div className="form-group"><label>Hora fin *</label>
+                <input type="time" value={retroForm.hora_fin} onChange={e => setRetroForm(f => ({ ...f, hora_fin: e.target.value }))} />
+              </div>
+              <div className="form-group full"><label>Profesor</label>
+                <select value={retroForm.profesor_id} onChange={e => setRetroForm(f => ({ ...f, profesor_id: e.target.value }))}>
+                  <option value="">Por asignar</option>
+                  {profesores.map(pr => <option key={pr.id} value={pr.id}>{pr.nombre}</option>)}
+                </select>
+                {!retroForm.profesor_id && (
+                  <div style={{ fontSize: 11, color: '#fac775', fontFamily: 'sans-serif', marginTop: 4 }}>
+                    <i className="ti ti-info-circle"></i> Sin profesor la clase no suma horas al corte, y el corte no se podrá cerrar hasta asignarlo.
+                  </div>
+                )}
+              </div>
+              <div className="form-group full"><label>Comentario</label>
+                <input value={retroForm.comentario} onChange={e => setRetroForm(f => ({ ...f, comentario: e.target.value }))} />
+              </div>
+            </div>
+
+            {retroForm.fecha && !retroFechaHabilitada && (
+              <div style={{ margin: '0 1.25rem 0.75rem', padding: '0.7rem 0.9rem', borderRadius: 8, background: 'rgba(239,159,39,0.1)', border: '0.5px solid rgba(239,159,39,0.3)' }}>
+                <div style={{ fontSize: 12, color: '#fac775', fontFamily: 'sans-serif', marginBottom: 6 }}>
+                  <i className="ti ti-calendar-question"></i> El {fmtDDMMYYYY(retroForm.fecha)} no está en la disponibilidad publicada. Se habilitará al guardar.
+                </div>
+                <label style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>Nota que justifica habilitarla *</label>
+                <input value={retroForm.notas} onChange={e => setRetroForm(f => ({ ...f, notas: e.target.value }))}
+                  placeholder="habilitada retroactivamente — regularización septiembre" />
+              </div>
+            )}
+
+            <div style={{ padding: '0 1.25rem 1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif' }}>
+                  Participantes ({retroSeleccionados.length} seleccionado{retroSeleccionados.length === 1 ? '' : 's'})
+                </span>
+                <input value={retroBusca} onChange={e => setRetroBusca(e.target.value)} placeholder="Buscar socio o alumno…" style={{ width: 240, fontSize: 12 }} />
+              </div>
+              <div style={{ maxHeight: 220, overflowY: 'auto', border: '0.5px solid var(--border)', borderRadius: 8 }}>
+                {retroParticipantes.length === 0 ? (
+                  <div style={{ padding: '0.8rem', fontSize: 12, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>Cargando socios…</div>
+                ) : retroFiltrados.length === 0 ? (
+                  <div style={{ padding: '0.8rem', fontSize: 12, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>Sin coincidencias.</div>
+                ) : retroFiltrados.map(pt => (
+                  <label key={pt.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', cursor: 'pointer', borderBottom: '0.5px solid rgba(201,168,76,0.06)' }}>
+                    <input type="checkbox" checked={!!retroSel[pt.key]}
+                      onChange={e => setRetroSel(prev => { const n = { ...prev }; if (e.target.checked) n[pt.key] = true; else delete n[pt.key]; return n })} />
+                    <span style={{ fontSize: 13, color: '#c8d0dc' }}>{pt.nombre}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>{pt.sub}</span>
+                  </label>
+                ))}
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif', cursor: 'pointer' }}>
+                <input type="checkbox" checked={retroForm.marcarRealizada} onChange={e => setRetroForm(f => ({ ...f, marcarRealizada: e.target.checked }))} />
+                Marcar como realizada (todos los seleccionados asistieron) y asignarla al corte abierto
+              </label>
+            </div>
+
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setShowRetro(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleGuardarRetro} disabled={guardandoRetro}>
+                {guardandoRetro ? <><i className="ti ti-loader"></i> Registrando…</> : <><i className="ti ti-calendar-plus"></i> Registrar clase</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
