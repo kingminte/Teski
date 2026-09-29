@@ -43,6 +43,15 @@ export default function ReporteClases() {
   const [showHuerfanas, setShowHuerfanas] = useState(false)
   const [exportando, setExportando] = useState(false)
 
+  // Uso del beneficio por socio (solo lectura)
+  const [alcanceUso, setAlcanceUso] = useState('corte')   // 'corte' | 'temporada'
+  const [gruposTemporada, setGruposTemporada] = useState([])
+  const [asistenciasUso, setAsistenciasUso] = useState([])  // [{ grupo_id, solicitud_id }]
+  const [solicitudesUso, setSolicitudesUso] = useState({})  // solicitud_id -> solicitud
+  const [sociosUso, setSociosUso] = useState({})            // socio_id -> socio
+  const [nombresUso, setNombresUso] = useState({})          // 'tipo:id' -> nombre
+  const [usoExpandido, setUsoExpandido] = useState(false)
+
   // Modales
   const [showCerrar, setShowCerrar] = useState(false)
   const [fechaFin, setFechaFin] = useState(hoyISO())
@@ -94,7 +103,65 @@ export default function ReporteClases() {
     }
     setGrupos(lista)
     setAsisPorGrupo(mapa)
+    setAlcanceUso('corte')
+    setUsoExpandido(false)
+    const c = cortes.find(x => x.id === corteId)
+    // Año de la temporada: slice sobre el ISO, sin construir Date (regla del proyecto).
+    await cargarUsoSocios(lista, (c?.fecha_inicio || lista[0]?.fecha || '').slice(0, 4))
     setLoading(false)
+  }
+
+  // Asistencias efectivas del corte y de toda la temporada, con los nombres
+  // resueltos. Se carga una vez por corte y el selector de alcance solo filtra.
+  const cargarUsoSocios = async (corteGrupos, anio) => {
+    const idsCorte = corteGrupos.filter(g => g.estado === 'realizada').map(g => g.id)
+
+    let temporada = []
+    if (anio) {
+      const { data: gTemp } = await supabase.from('clases_grupos')
+        .select('id,fecha,corte_id')
+        .eq('estado', 'realizada')
+        .gte('fecha', `${anio}-01-01`).lte('fecha', `${anio}-12-31`)
+      temporada = gTemp || []
+    }
+    setGruposTemporada(temporada)
+
+    const vaciar = () => { setAsistenciasUso([]); setSolicitudesUso({}); setSociosUso({}); setNombresUso({}) }
+    const ids = [...new Set([...idsCorte, ...temporada.map(g => g.id)])]
+    if (ids.length === 0) { vaciar(); return }
+
+    const { data: asis } = await supabase.from('clases_asistencia')
+      .select('grupo_id,solicitud_id').eq('asistio', true).in('grupo_id', ids)
+    const listaAsis = asis || []
+    setAsistenciasUso(listaAsis)
+
+    const solIds = [...new Set(listaAsis.map(a => a.solicitud_id))]
+    if (solIds.length === 0) { setSolicitudesUso({}); setSociosUso({}); setNombresUso({}); return }
+
+    const { data: sols } = await supabase.from('clases_solicitudes')
+      .select('id,socio_id,participante_tipo,participante_id').in('id', solIds)
+    const solMap = {}
+    ;(sols || []).forEach(x => { solMap[x.id] = x })
+    setSolicitudesUso(solMap)
+
+    // Nombres: el socio dueño de la solicitud y el participante (socio o beneficiario).
+    const socioIds = new Set(), beneIds = new Set()
+    ;(sols || []).forEach(x => {
+      socioIds.add(x.socio_id)
+      if (x.participante_tipo === 'socio') socioIds.add(x.participante_id)
+      else beneIds.add(x.participante_id)
+    })
+    const socMap = {}, nomMap = {}
+    if (socioIds.size) {
+      const { data } = await supabase.from('socios').select('id,nombre,apellido,numero_socio').in('id', [...socioIds])
+      ;(data || []).forEach(x => { socMap[x.id] = x; nomMap[`socio:${x.id}`] = `${x.nombre} ${x.apellido}` })
+    }
+    if (beneIds.size) {
+      const { data } = await supabase.from('beneficiarios').select('id,nombre,apellido').in('id', [...beneIds])
+      ;(data || []).forEach(x => { nomMap[`beneficiario:${x.id}`] = `${x.nombre} ${x.apellido}` })
+    }
+    setSociosUso(socMap)
+    setNombresUso(nomMap)
   }
 
   const corte = cortes.find(c => c.id === corteSelId)
@@ -122,6 +189,42 @@ export default function ReporteClases() {
     acc[key].clases++
     return acc
   }, {})).sort((a, b) => b.horas - a.horas)
+
+  // ----- Uso del beneficio por socio -----
+  const anioCorte = (corte?.fecha_inicio || '').slice(0, 4)
+  const gruposUso = alcanceUso === 'temporada' ? gruposTemporada : realizadas
+  const idsUso = new Set(gruposUso.map(g => g.id))
+
+  const usoPorSocio = Object.values(
+    asistenciasUso.filter(a => idsUso.has(a.grupo_id)).reduce((acc, a) => {
+      const sol = solicitudesUso[a.solicitud_id]
+      if (!sol) return acc
+      if (!acc[sol.socio_id]) {
+        const soc = sociosUso[sol.socio_id]
+        acc[sol.socio_id] = {
+          socio_id: sol.socio_id,
+          nombre: soc ? `${soc.nombre} ${soc.apellido}` : 'Socio',
+          numero: soc?.numero_socio || '',
+          clases: 0,
+          alumnos: {},
+        }
+      }
+      const e = acc[sol.socio_id]
+      e.clases++
+      // El titular también puede tomar clases: se marca para distinguirlo.
+      const pk = `${sol.participante_tipo}:${sol.participante_id}`
+      if (!e.alumnos[pk]) e.alumnos[pk] = { nombre: nombresUso[pk] || 'Participante', titular: sol.participante_tipo === 'socio', n: 0 }
+      e.alumnos[pk].n++
+      return acc
+    }, {}),
+  ).map(e => ({ ...e, alumnosList: Object.values(e.alumnos).sort((a, b) => b.n - a.n || a.nombre.localeCompare(b.nombre)) }))
+    .sort((a, b) => b.clases - a.clases || a.nombre.localeCompare(b.nombre))
+
+  const totalUso = usoPorSocio.reduce((t, e) => t + e.clases, 0)
+  const alumnosUso = usoPorSocio.reduce((t, e) => t + e.alumnosList.length, 0)
+  const pctUso = (n) => (totalUso > 0 ? Math.round((n / totalUso) * 100) : 0)
+  const usoVisibles = usoExpandido ? usoPorSocio : usoPorSocio.slice(0, 8)
+  const usoOcultos = usoPorSocio.length - usoVisibles.length
 
   // ----- Acciones -----
   const reload = async () => { await loadCortes() }
@@ -200,6 +303,22 @@ export default function ReporteClases() {
       const ws = XLSX.utils.json_to_sheet(rows)
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, `Corte ${corte?.numero || ''}`)
+
+      // Hoja adicional con el uso por socio, en el alcance que esté seleccionado.
+      if (usoPorSocio.length > 0) {
+        const usoRows = usoPorSocio.map(e => ({
+          Socio: e.nombre,
+          'N° socio': e.numero,
+          Alumnos: e.alumnosList.map(a => `${a.nombre}${a.titular ? ' (titular)' : ''} x${a.n}`).join(' · '),
+          Clases: e.clases,
+          '%': pctUso(e.clases),
+        }))
+        usoRows.push({})
+        usoRows.push({ Socio: 'TOTAL', Clases: totalUso, '%': 100 })
+        usoRows.push({ Socio: alcanceUso === 'temporada' ? `Alcance: temporada ${anioCorte}` : `Alcance: corte #${corte?.numero || ''}` })
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(usoRows), 'Uso por socio')
+      }
+
       XLSX.writeFile(wb, `reporte_clases_corte_${corte?.numero || 'x'}.xlsx`)
     } catch (e) {
       showToast('Error al exportar: ' + e.message, 'error')
@@ -346,6 +465,65 @@ export default function ReporteClases() {
                 ))}
               </div>
             </div>
+          </div>
+
+          {/* Uso del beneficio por socio */}
+          <div className="card" style={{ marginBottom: '1rem' }}>
+            <div className="card-header">
+              <div className="card-title"><i className="ti ti-users"></i> Uso del beneficio por socio</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                {usoPorSocio.length > 0 && (
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                    {totalUso} asistencia{totalUso === 1 ? '' : 's'} · {alumnosUso} alumno{alumnosUso === 1 ? '' : 's'} · {usoPorSocio.length} socio{usoPorSocio.length === 1 ? '' : 's'}
+                  </span>
+                )}
+                <select value={alcanceUso} onChange={e => { setAlcanceUso(e.target.value); setUsoExpandido(false) }} style={{ width: 'auto', fontSize: 12 }}>
+                  <option value="corte">Este corte</option>
+                  <option value="temporada">Temporada {anioCorte}</option>
+                </select>
+              </div>
+            </div>
+            {usoPorSocio.length === 0 ? (
+              <div className="empty-state"><i className="ti ti-user-off"></i>
+                {alcanceUso === 'temporada' ? `Sin asistencias en la temporada ${anioCorte}.` : 'Sin asistencias en este corte.'}
+              </div>
+            ) : (
+              <table>
+                <thead><tr>
+                  <th>Socio</th><th>Alumnos</th><th>Clases</th>
+                  <th style={{ width: 200 }}>{alcanceUso === 'temporada' ? '% de la temporada' : '% del corte'}</th>
+                </tr></thead>
+                <tbody>
+                  {usoVisibles.map(e => (
+                    <tr key={e.socio_id}>
+                      <td>
+                        <div style={{ color: '#c8d0dc' }}>{e.nombre}</div>
+                        {e.numero && <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>{e.numero}</div>}
+                      </td>
+                      <td style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                        {e.alumnosList.map(a => `${a.nombre}${a.titular ? ' (titular)' : ''} ×${a.n}`).join(' · ')}
+                      </td>
+                      <td style={{ fontWeight: 'bold', color: '#afa9ec' }}>{e.clases}</td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{ flex: 1, height: 6, borderRadius: 3, background: 'var(--navy-mid)', overflow: 'hidden' }}>
+                            <div style={{ width: `${pctUso(e.clases)}%`, height: '100%', borderRadius: 3, background: '#afa9ec' }}></div>
+                          </div>
+                          <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif', minWidth: 30, textAlign: 'right' }}>{pctUso(e.clases)}%</span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {usoOcultos > 0 && (
+                    <tr style={{ cursor: 'pointer' }} onClick={() => setUsoExpandido(true)}>
+                      <td colSpan={4} style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                        <i className="ti ti-chevron-right"></i> +{usoOcultos} socio{usoOcultos === 1 ? '' : 's'} con menos uso
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
           </div>
 
           {/* Tabla detallada */}
