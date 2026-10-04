@@ -7,9 +7,14 @@ import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/m
 const FORMAS_PAGO = [
   { value: 'transferencia', label: 'Transferencia' },
   { value: 'cheque', label: 'Cheque' },
+  { value: 'canje', label: 'Canje' },
   { value: 'efectivo', label: 'Efectivo' },
   { value: 'otro', label: 'Otro' },
 ]
+
+// Un canje salda la cuota con servicios: no hay flujo bancario, así que la única
+// trazabilidad es lo que se escriba. Sin comentario no se guarda.
+const PLACEHOLDER_CANJE = 'Describe el canje: qué servicios saldan la cuota y quién lo autorizó'
 
 export default function Cuotas() {
   const { showToast, ToastComponent } = useToast()
@@ -205,6 +210,9 @@ export default function Cuotas() {
 
   const handleRegistrarPago = async () => {
     if (!formPago.monto || !formPago.fecha_pago) { showToast('Monto y fecha son obligatorios', 'error'); return }
+    if (formPago.forma_pago === 'canje' && !formPago.comentario.trim()) {
+      showToast('Un canje necesita comentario: describe qué servicios saldan la cuota y quién lo autorizó', 'error'); return
+    }
 
     const fechaPago = new Date(formPago.fecha_pago + 'T00:00:00')
     const hoy = new Date()
@@ -239,6 +247,9 @@ export default function Cuotas() {
 
   const handleGuardarEditPago = async () => {
     if (!editPago.monto || !editPago.fecha_pago) { showToast('Monto y fecha son obligatorios', 'error'); return }
+    if (editPago.forma_pago === 'canje' && !(editPago.comentario || '').trim()) {
+      showToast('Un canje necesita comentario: describe qué servicios saldan la cuota y quién lo autorizó', 'error'); return
+    }
     setSaving(true)
     const { error } = await supabase.from('pagos_cuota').update({
       monto: parsearMonto(editPago.monto),
@@ -605,7 +616,7 @@ export default function Cuotas() {
                                           <td style={{ padding: '6px 10px' }}>
                                             <input type="text" value={editPago.comentario || ''}
                                               onChange={e => setEditPago(ep => ({ ...ep, comentario: e.target.value }))}
-                                              placeholder="Comentario…"
+                                              placeholder={editPago.forma_pago === 'canje' ? 'Describe el canje… (obligatorio)' : 'Comentario…'}
                                               style={{ fontSize: 12, padding: '3px 6px', width: 160 }} />
                                           </td>
                                           <td style={{ padding: '6px 10px' }}>
@@ -926,8 +937,13 @@ export default function Cuotas() {
                 </div>
               )}
               <div className="form-group full">
-                <label>Comentario</label>
-                <input placeholder="Ej: Pago parcial 1 de 3" {...FP('comentario')} />
+                <label>Comentario{formPago.forma_pago === 'canje' ? ' *' : ''}</label>
+                <input placeholder={formPago.forma_pago === 'canje' ? PLACEHOLDER_CANJE : 'Ej: Pago parcial 1 de 3'} {...FP('comentario')} />
+                {formPago.forma_pago === 'canje' && (
+                  <div style={{ fontSize: 11, color: '#fac775', fontFamily: 'sans-serif', marginTop: 4 }}>
+                    <i className="ti ti-info-circle"></i> El canje no genera movimiento bancario: este comentario es su único respaldo.
+                  </div>
+                )}
               </div>
             </div>
             <div className="modal-footer">

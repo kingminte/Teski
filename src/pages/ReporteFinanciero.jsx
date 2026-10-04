@@ -215,6 +215,19 @@ export default function ReporteFinanciero() {
       }
       const totalChequesPorCobrar = chequesPorCobrar.reduce((t, p) => t + p.monto, 0)
 
+      // Pagos por canje: la cuota se saldó con servicios, sin flujo bancario por
+      // diseño. Son ingreso del período y nunca tendrán movimiento en cartola,
+      // así que explican diferencia igual que un cheque sin cobrar.
+      const canjes = pagos.filter(p => p.forma_pago === 'canje')
+      const detalleCanjes = canjes.map(p => ({
+        fecha: p.fecha_pago,
+        proveedor: p.socios ? `${p.socios.nombre} ${p.socios.apellido} (${p.socios.numero_socio})` : 'Socio no identificado',
+        descripcion: p.comentario || 'Sin descripción del canje',
+        cheque: '',
+        monto: p.monto,
+      })).sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
+      const totalCanjes = canjes.reduce((t, p) => t + p.monto, 0)
+
       // Si no hay cartola del mes final, calcular saldo por diferencia
       if (saldoCtaCte === null) {
         saldoCtaCte = saldoAnterior + totalPeriodoIng - totalEgresos
@@ -227,6 +240,7 @@ export default function ReporteFinanciero() {
         totalCuotas, totalOtrosIng, totalPeriodoIng,
         egresosAgrupados, totalEgresos,
         totalChequesPorCobrar, detalleChequesPorCobrar,
+        totalCanjes, detalleCanjes,
         saldoAnterior, saldoCtaCte,
         saldoAnteriorCalculado, saldoCtaCteCalculado,
         totalIngresos: totalPeriodoIng + saldoAnterior,
@@ -358,15 +372,34 @@ export default function ReporteFinanciero() {
 
   const cuadra = datos && datos.totalIngresos === datos.totalEgresosMasSaldo
   const diferencia = datos ? datos.totalIngresos - datos.totalEgresosMasSaldo : 0
-  // La diferencia queda explicada si coincide con los cheques por cobrar.
-  // Tolerancia de $1 por redondeos. Se compara el valor absoluto: el signo del
-  // descuadre no cambia que la causa sea el desfase del cobro bancario.
-  const porCobrar = datos?.totalChequesPorCobrar || 0
-  const nCheques = datos?.detalleChequesPorCobrar?.length || 0
+  // Partidas que explican una diferencia: son ingreso del período pero no tienen
+  // (ni tendrán, en el caso del canje) movimiento en cartola. Solo explican una
+  // diferencia POSITIVA: si faltan ingresos, estas partidas no son la causa.
+  const partidas = [
+    {
+      id: 'cheques-por-cobrar',
+      total: datos?.totalChequesPorCobrar || 0,
+      items: datos?.detalleChequesPorCobrar || [],
+      etiqueta: (n) => `${formatearMontoConSimbolo(datos.totalChequesPorCobrar)} en cheques recibidos por cobrar en banco (${n} cheque${n === 1 ? '' : 's'})`,
+      linea: (n) => `Cheques recibidos por cobrar en banco (${n})`,
+      nota: 'Ya son ingreso del período, pero el banco todavía no los cobró: no hay movimiento en cartola.',
+    },
+    {
+      id: 'canjes',
+      total: datos?.totalCanjes || 0,
+      items: datos?.detalleCanjes || [],
+      etiqueta: (n) => `${formatearMontoConSimbolo(datos.totalCanjes)} en pagos por canje (${n} pago${n === 1 ? '' : 's'})`,
+      linea: (n) => `Pagos por canje (${n})`,
+      nota: 'Cuotas saldadas con servicios: no generan flujo bancario por diseño.',
+    },
+  ].filter(x => x.total > 0)
+
+  const totalExplicado = partidas.reduce((t, x) => t + x.total, 0)
   const difAbs = Math.abs(diferencia)
-  const difExplicada = !cuadra && porCobrar > 0 && Math.abs(difAbs - porCobrar) <= 1
-  const difParcial = !cuadra && porCobrar > 0 && difAbs - porCobrar > 1
-  const sinExplicar = difAbs - porCobrar
+  // Tolerancia de $1 por redondeos.
+  const difExplicada = !cuadra && diferencia > 0 && totalExplicado > 0 && Math.abs(difAbs - totalExplicado) <= 1
+  const difParcial = !cuadra && diferencia > 0 && totalExplicado > 0 && difAbs - totalExplicado > 1
+  const sinExplicar = difAbs - totalExplicado
 
   return (
     <div>
@@ -515,10 +548,10 @@ export default function ReporteFinanciero() {
                     <i className="ti ti-info-circle" style={{ fontSize: 28, color: '#85b7eb' }}></i>
                     <div>
                       <div style={{ fontSize: 15, color: '#85b7eb', fontWeight: 'bold' }}>
-                        Diferencia explicada: {formatearMontoConSimbolo(porCobrar)} en cheques recibidos por cobrar en banco ({nCheques} cheque{nCheques === 1 ? '' : 's'})
+                        Diferencia explicada: {partidas.map(x => x.etiqueta(x.items.length)).join(' + ')}
                       </div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
-                        Ya son ingreso del período, pero el banco todavía no los cobró: no hay movimiento en cartola.
+                        {partidas.map(x => x.nota).join(' ')}
                       </div>
                     </div>
                   </>
@@ -530,7 +563,7 @@ export default function ReporteFinanciero() {
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
                         {difParcial ? (
                           <>
-                            De {formatearMontoConSimbolo(difAbs)}, {formatearMontoConSimbolo(porCobrar)} corresponde a cheques por cobrar;{' '}
+                            De {formatearMontoConSimbolo(difAbs)}, {partidas.map(x => `${formatearMontoConSimbolo(x.total)} ${x.id === 'canjes' ? 'a pagos por canje' : 'a cheques por cobrar'}`).join(' y ')};{' '}
                             <strong style={{ color: '#f09595' }}>{formatearMontoConSimbolo(sinExplicar)} sin explicar</strong>
                           </>
                         ) : (
@@ -552,14 +585,10 @@ export default function ReporteFinanciero() {
                 </div>
               </div>
             </div>
-            {/* Detalle expandible de los cheques que explican (total o en parte) la diferencia */}
-            {!cuadra && porCobrar > 0 && renderFila(
-              'cheques-por-cobrar',
-              `Cheques recibidos por cobrar en banco (${nCheques})`,
-              porCobrar,
-              datos.detalleChequesPorCobrar,
-              '#85b7eb',
-            )}
+            {/* Una línea expandible por partida que explica (total o en parte) la diferencia */}
+            {!cuadra && diferencia > 0 && partidas.map(x => (
+              <div key={x.id}>{renderFila(x.id, x.linea(x.items.length), x.total, x.items, '#85b7eb')}</div>
+            ))}
           </div>
         </>
       )}
