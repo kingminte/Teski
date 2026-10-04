@@ -6,7 +6,8 @@ import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/m
 import { recalcularCuenta } from '../lib/cuentasPorPagar'
 
 const EMPTY_CHEQUERA = { nombre: '', banco: 'Banco Estado', folio_inicial: '', folio_final: '' }
-const EMPTY_DETALLE = { folio: '', fecha: new Date().toISOString().slice(0,10), beneficiario: '', concepto: '', monto: '', estado: 'emitido', cuenta_id: '' }
+const CATEGORIA_DEFAULT = 'Otros gastos'
+const EMPTY_DETALLE = { folio: '', fecha: new Date().toISOString().slice(0,10), beneficiario: '', concepto: '', monto: '', estado: 'emitido', categoria: CATEGORIA_DEFAULT, cuenta_id: '' }
 
 export default function Chequera() {
   const { showToast, ToastComponent } = useToast()
@@ -28,8 +29,15 @@ export default function Chequera() {
   const [saving, setSaving] = useState(false)
   const [uploadingFor, setUploadingFor] = useState(null)
   const [exportando, setExportando] = useState(false)
+  const [categorias, setCategorias] = useState([])   // plan_cuentas tipo gasto
 
-  useEffect(() => { loadChequeras(); loadCuentasPorPagar() }, [])
+  useEffect(() => { loadChequeras(); loadCuentasPorPagar(); loadCategorias() }, [])
+
+  const loadCategorias = async () => {
+    const { data } = await supabase.from('plan_cuentas')
+      .select('id,nombre').eq('tipo', 'gasto').eq('activo', true).order('nombre')
+    setCategorias(data || [])
+  }
 
   const loadCuentasPorPagar = async () => {
     const { data } = await supabase
@@ -104,6 +112,7 @@ export default function Chequera() {
 
   const handleGuardarDetalle = async () => {
     if (!formDetalle.folio) { showToast('El folio es obligatorio', 'error'); return }
+    if (!formDetalle.categoria) { showToast('La categoría es obligatoria', 'error'); return }
     setSaving(true)
     const montoNum = parsearMonto(montoDetalle)
     const { cuenta_id, ...detalleForm } = formDetalle
@@ -420,6 +429,7 @@ export default function Chequera() {
                               concepto: d.concepto || '',
                               monto: d.monto ? String(d.monto) : '',
                               estado: d.estado,
+                              categoria: d.categoria || CATEGORIA_DEFAULT,
                             })
                             setMontoDetalle(d.monto ? formatearMonto(d.monto) : '')
                             setEditDetalleId(d.id)
@@ -513,6 +523,12 @@ export default function Chequera() {
                     Se guardará como: {formatearMontoConSimbolo(parsearMonto(montoDetalle))}
                   </div>
                 )}
+              </div>
+              <div className="form-group">
+                <label>Categoría *</label>
+                <select {...FD('categoria')}>
+                  {categorias.map(c => <option key={c.id} value={c.nombre}>{c.nombre.trim()}</option>)}
+                </select>
               </div>
               <div className="form-group">
                 <label>Estado</label>

@@ -12,8 +12,10 @@ const MEDIOS_PAGO = [
   { value: 'otro', label: 'Otro' },
 ]
 
+const CATEGORIA_DEFAULT = 'Otros gastos'
+
 const EMPTY_CUENTA = {
-  proveedor_id: '', concepto: '', categoria: '', descripcion: '',
+  proveedor_id: '', concepto: '', categoria: CATEGORIA_DEFAULT, descripcion: '',
   monto_total: '', fecha_emision: new Date().toISOString().slice(0, 10),
   fecha_vencimiento: '', comentario: '',
 }
@@ -169,7 +171,7 @@ export default function CuentasPorPagar() {
       proveedor_id: cuenta.proveedor_id || '',
       concepto: cuenta.concepto || '',
       descripcion: cuenta.descripcion || '',
-      categoria: cuenta.categoria || '',
+      categoria: cuenta.categoria || CATEGORIA_DEFAULT,
       monto_total: cuenta.monto_total || 0,
       fecha_emision: cuenta.fecha_emision || hoyStr(),
       fecha_vencimiento: cuenta.fecha_vencimiento || '',
@@ -198,6 +200,7 @@ export default function CuentasPorPagar() {
   const handleGuardarCuenta = async () => {
     if (!formNueva.proveedor_id) { showToast('Selecciona un proveedor', 'error'); return }
     if (!formNueva.concepto.trim()) { showToast('El concepto es obligatorio', 'error'); return }
+    if (!formNueva.categoria) { showToast('La categoría es obligatoria', 'error'); return }
     const total = parsearMonto(montoNueva)
     if (total <= 0) { showToast('El monto debe ser mayor a 0', 'error'); return }
 
@@ -343,6 +346,7 @@ export default function CuentasPorPagar() {
       fecha: formCheque.fecha,
       beneficiario: cuenta.proveedores?.nombre || '',
       concepto: formCheque.concepto || cuenta.concepto,
+      categoria: cuenta.categoria || CATEGORIA_DEFAULT,
       monto,
       estado: 'emitido',
     }).select().single()
@@ -406,6 +410,7 @@ export default function CuentasPorPagar() {
       fecha: pago.fecha_pago,
       beneficiario: cuenta.proveedores?.nombre || '',
       concepto: cuenta.concepto,
+      categoria: cuenta.categoria || CATEGORIA_DEFAULT,
       monto: pago.monto,
       estado: 'emitido',
     }).select().single()
@@ -493,6 +498,7 @@ export default function CuentasPorPagar() {
       fecha: formChequeCuotas.fecha,
       beneficiario: cuenta.proveedores?.nombre || '',
       concepto: formChequeCuotas.concepto || cuenta.concepto,
+      categoria: cuenta.categoria || CATEGORIA_DEFAULT,
       monto,
       estado: 'emitido',
     }).select().single()
@@ -941,10 +947,9 @@ export default function CuentasPorPagar() {
                   {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
                 </select>
               </div>
-              <div className="form-group"><label>Categoría</label>
+              <div className="form-group"><label>Categoría *</label>
                 <select value={formNueva.categoria} onChange={e => setFormNueva(f => ({ ...f, categoria: e.target.value }))}>
-                  <option value="">Sin categoría</option>
-                  {planCuentasGasto.map(pc => <option key={pc.id} value={pc.nombre}>{pc.nombre}</option>)}
+                  {planCuentasGasto.map(pc => <option key={pc.id} value={pc.nombre}>{pc.nombre.trim()}</option>)}
                 </select>
               </div>
               <div className="form-group full"><label>Concepto *</label>

@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
 import { formatearMontoConSimbolo } from '../lib/montos'
 
+const CATEGORIA_SIN = 'Otros gastos'
+
 const NOMBRES_MES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
 const generarMeses = () => {
@@ -83,7 +85,7 @@ export default function ReporteFinanciero() {
           .order('fecha_pago'),
         supabase.from('otros_ingresos').select('*').gte('fecha', fechaInicio).lte('fecha', fechaFin).order('fecha'),
         supabase.from('movimientos')
-          .select('*, chequera_detalle(id, beneficiario, concepto, folio), cartolas(nombre_archivo)')
+          .select('*, chequera_detalle(id, beneficiario, concepto, folio, categoria), cartolas(nombre_archivo)')
           .gte('fecha', fechaInicio).lte('fecha', fechaFin).lt('monto', 0).order('fecha'),
         supabase.from('pagos_cuenta')
           .select('*, cuentas_por_pagar(concepto, categoria, proveedores(nombre))')
@@ -153,13 +155,17 @@ export default function ReporteFinanciero() {
         g.items.push(item)
         g.total += monto
       }
+      // Categoría del egreso. Los nombres vienen de plan_cuentas y algunos traen
+      // espacios al borde ("Clases Esquí "), así que se recortan para que no
+      // generen dos líneas. Sin categoría → "Otros gastos": nunca se pierde.
+      const categoriaDe = (valor) => (valor || '').trim() || CATEGORIA_SIN
       movimientos.forEach(m => {
-        const cat = m.chequera_detalle?.concepto || 'Otros gastos'
         const monto = Math.abs(m.monto)
-        addEgreso(cat, {
+        addEgreso(categoriaDe(m.chequera_detalle?.categoria), {
           fecha: m.fecha,
           proveedor: m.chequera_detalle?.beneficiario || '',
-          descripcion: m.descripcion || '',
+          // El concepto del cheque pasa al detalle: antes era la etiqueta de la línea.
+          descripcion: m.chequera_detalle?.concepto || m.descripcion || '',
           monto,
           cheque: m.chequera_detalle?.folio ? `N°${m.chequera_detalle.folio}` : '',
         }, monto)
@@ -168,10 +174,10 @@ export default function ReporteFinanciero() {
         // Ya contado vía el movimiento de cartola: por cheque (chequera_detalle_id)
         // o por vínculo directo del pago con el movimiento (movimiento_id, que usan
         // los giros por caja en efectivo y las transferencias). Sin la segunda
-        // condición el egreso se sumaba dos veces.
+        // condición el egreso se sumaba dos veces. Este guard no cambia: la
+        // categorización altera cómo se agrupa, no qué se cuenta.
         if (p.chequera_detalle_id || p.movimiento_id) return
-        const cat = p.cuentas_por_pagar?.categoria || p.cuentas_por_pagar?.concepto || 'Otros gastos'
-        addEgreso(cat, {
+        addEgreso(categoriaDe(p.cuentas_por_pagar?.categoria), {
           fecha: p.fecha_pago,
           proveedor: p.cuentas_por_pagar?.proveedores?.nombre || '',
           descripcion: p.cuentas_por_pagar?.concepto || '',
@@ -181,6 +187,8 @@ export default function ReporteFinanciero() {
       })
 
       const totalEgresos = Object.values(egresosAgrupados).reduce((t, g) => t + g.total, 0)
+      // Dentro de cada categoría el detalle va cronológico.
+      Object.values(egresosAgrupados).forEach(g => g.items.sort((a, b) => (a.fecha || '').localeCompare(b.fecha || '')))
 
       // Cheques recibidos aún no cobrados por el banco: el pago ya es ingreso del
       // período (fecha_pago), pero no hay movimiento en cartola todavía. Explica
@@ -458,7 +466,9 @@ export default function ReporteFinanciero() {
                 </div>
               </div>
               {(() => {
-                const cats = Object.entries(datos.egresosAgrupados).filter(([, g]) => g.total !== 0)
+                const cats = Object.entries(datos.egresosAgrupados)
+                  .filter(([, g]) => g.total !== 0)
+                  .sort(([, a], [, b]) => b.total - a.total)
                 if (cats.length === 0) return (
                   <div className="empty-state" style={{ padding: '1.5rem 1rem' }}><i className="ti ti-receipt-off"></i>Sin egresos en este período</div>
                 )
