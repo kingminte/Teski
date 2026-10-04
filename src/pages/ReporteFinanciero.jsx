@@ -223,7 +223,10 @@ export default function ReporteFinanciero() {
       // Cheques recibidos aún no cobrados por el banco: el pago ya es ingreso del
       // período (fecha_pago), pero no hay movimiento en cartola todavía. Explica
       // el desfase normal entre registrar el cheque y que el banco lo cobre.
-      const chequesPorCobrar = pagos.filter(p => p.cheque_id && !p.movimiento_id)
+      // Se excluyen los 'no_aplica': un cheque marcado así no está "por cobrar",
+      // nunca se va a cobrar. Cae en la partida de pagos sin flujo bancario, y
+      // sin esta exclusión quedaría contado en las dos.
+      const chequesPorCobrar = pagos.filter(p => p.cheque_id && !p.movimiento_id && p.conciliacion !== 'no_aplica')
       let detalleChequesPorCobrar = []
       if (chequesPorCobrar.length > 0) {
         // El socio sale del cheque, no del pago: es quien lo giró.
@@ -258,6 +261,20 @@ export default function ReporteFinanciero() {
       })).sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
       const totalCanjes = canjes.reduce((t, p) => t + p.monto, 0)
 
+      // Pagos sin flujo bancario: el resto de los 'no_aplica' que no son canje
+      // (saldos de apertura de la tesorería anterior, depósitos cuya cartola el
+      // banco ya no entrega). Se excluye el canje para no contarlo dos veces:
+      // ya tiene su propia partida.
+      const sinFlujo = pagos.filter(p => p.conciliacion === 'no_aplica' && p.forma_pago !== 'canje')
+      const detalleSinFlujo = sinFlujo.map(p => ({
+        fecha: p.fecha_pago,
+        proveedor: p.socios ? `${p.socios.nombre} ${p.socios.apellido} (${p.socios.numero_socio})` : 'Socio no identificado',
+        descripcion: p.comentario || 'Sin motivo registrado',
+        cheque: '',
+        monto: p.monto,
+      })).sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
+      const totalSinFlujo = sinFlujo.reduce((t, p) => t + p.monto, 0)
+
       // Si no hay cartola del mes final, calcular saldo por diferencia
       if (saldoCtaCte === null) {
         saldoCtaCte = saldoAnterior + totalPeriodoIng - totalEgresos
@@ -271,6 +288,7 @@ export default function ReporteFinanciero() {
         egresosAgrupados, totalEgresos,
         totalChequesPorCobrar, detalleChequesPorCobrar,
         totalCanjes, detalleCanjes,
+        totalSinFlujo, detalleSinFlujo,
         saldoAnterior, saldoCtaCte,
         saldoAnteriorCalculado, saldoCtaCteCalculado,
         saldoAnteriorOrigen, aperturaRango,
@@ -409,6 +427,7 @@ export default function ReporteFinanciero() {
   const partidas = [
     {
       id: 'cheques-por-cobrar',
+      corto: 'a cheques por cobrar',
       total: datos?.totalChequesPorCobrar || 0,
       items: datos?.detalleChequesPorCobrar || [],
       etiqueta: (n) => `${formatearMontoConSimbolo(datos.totalChequesPorCobrar)} en cheques recibidos por cobrar en banco (${n} cheque${n === 1 ? '' : 's'})`,
@@ -417,11 +436,21 @@ export default function ReporteFinanciero() {
     },
     {
       id: 'canjes',
+      corto: 'a pagos por canje',
       total: datos?.totalCanjes || 0,
       items: datos?.detalleCanjes || [],
       etiqueta: (n) => `${formatearMontoConSimbolo(datos.totalCanjes)} en pagos por canje (${n} pago${n === 1 ? '' : 's'})`,
       linea: (n) => `Pagos por canje (${n})`,
       nota: 'Cuotas saldadas con servicios: no generan flujo bancario por diseño.',
+    },
+    {
+      id: 'sin-flujo-bancario',
+      corto: 'a pagos sin flujo bancario',
+      total: datos?.totalSinFlujo || 0,
+      items: datos?.detalleSinFlujo || [],
+      etiqueta: (n) => `${formatearMontoConSimbolo(datos.totalSinFlujo)} en pagos sin flujo bancario (apertura/históricos) (${n} pago${n === 1 ? '' : 's'})`,
+      linea: (n) => `Pagos sin flujo bancario (apertura/históricos) (${n})`,
+      nota: 'Saldos de apertura de la tesorería anterior y depósitos cuya cartola el banco ya no entrega: marcados como "conciliación no aplica".',
     },
   ].filter(x => x.total > 0)
 
@@ -430,6 +459,10 @@ export default function ReporteFinanciero() {
   // Tolerancia de $1 por redondeos.
   const difExplicada = !cuadra && diferencia > 0 && totalExplicado > 0 && Math.abs(difAbs - totalExplicado) <= 1
   const difParcial = !cuadra && diferencia > 0 && totalExplicado > 0 && difAbs - totalExplicado > 1
+  // Las partidas suman MÁS que la diferencia: no la explican limpio, hay un
+  // descuadre en sentido contrario mezclado. No se puede dar por explicada, pero
+  // tampoco corresponde callar las partidas identificadas.
+  const difExcedida = !cuadra && diferencia > 0 && totalExplicado > 0 && totalExplicado - difAbs > 1
   const sinExplicar = difAbs - totalExplicado
 
   return (
@@ -599,8 +632,13 @@ export default function ReporteFinanciero() {
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
                         {difParcial ? (
                           <>
-                            De {formatearMontoConSimbolo(difAbs)}, {partidas.map(x => `${formatearMontoConSimbolo(x.total)} ${x.id === 'canjes' ? 'a pagos por canje' : 'a cheques por cobrar'}`).join(' y ')};{' '}
+                            De {formatearMontoConSimbolo(difAbs)}, {partidas.map(x => `${formatearMontoConSimbolo(x.total)} ${x.corto}`).join(', ')};{' '}
                             <strong style={{ color: '#f09595' }}>{formatearMontoConSimbolo(sinExplicar)} sin explicar</strong>
+                          </>
+                        ) : difExcedida ? (
+                          <>
+                            Hay {formatearMontoConSimbolo(totalExplicado)} en partidas sin flujo bancario ({partidas.map(x => `${formatearMontoConSimbolo(x.total)} ${x.corto}`).join(', ')}),{' '}
+                            <strong style={{ color: '#f09595' }}>más que la diferencia</strong>: hay un descuadre en sentido contrario mezclado. Revisa el detalle.
                           </>
                         ) : (
                           diferencia > 0 ? 'Hay ingresos sin contraparte en egresos+saldo' : 'Hay egresos+saldo sin contraparte en ingresos'
