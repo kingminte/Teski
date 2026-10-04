@@ -231,6 +231,9 @@ export default function Cuotas() {
       forma_pago: formPago.forma_pago,
       cheque_id: formPago.cheque_id || null,
       comentario: formPago.comentario,
+      // Un canje jamás tendrá movimiento bancario: no debe nacer pendiente de
+      // conciliar. Sale del panel de pendientes y del matcher de la cartola.
+      conciliacion: formPago.forma_pago === 'canje' ? 'no_aplica' : null,
     }
     const { error } = await supabase.from('pagos_cuota').insert(payload)
     setSaving(false)
@@ -256,6 +259,14 @@ export default function Cuotas() {
       fecha_pago: editPago.fecha_pago,
       forma_pago: editPago.forma_pago,
       comentario: editPago.comentario,
+      // Si el pago pasa a canje queda fuera de la conciliación; si deja de serlo,
+      // vuelve a pendiente. Solo se toca cuando el canje entra o sale en juego,
+      // para no pisar un 'no_aplica' puesto a mano por otro motivo.
+      ...(editPago.forma_pago === 'canje'
+        ? { conciliacion: 'no_aplica' }
+        : (editPago.conciliacion === 'no_aplica' && editPago.forma_pago_original === 'canje'
+            ? { conciliacion: null }
+            : {})),
     }).eq('id', editPago.id)
     setSaving(false)
     if (error) showToast('Error al guardar', 'error')
@@ -697,6 +708,8 @@ export default function Cuotas() {
                                                   monto: formatearMonto(p.monto),
                                                   fecha_pago: p.fecha_pago,
                                                   forma_pago: p.forma_pago,
+                                                  forma_pago_original: p.forma_pago,
+                                                  conciliacion: p.conciliacion || null,
                                                   comentario: p.comentario || '',
                                                 })}>
                                                   <i className="ti ti-edit"></i>

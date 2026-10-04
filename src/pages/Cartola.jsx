@@ -25,6 +25,8 @@ export default function Cartola() {
   const { showToast, ToastComponent } = useToast()
   const { puedeEditar, user } = useAuth()
   const editable = puedeEditar('cartola')
+  const esAdmin = user?.rol === 'admin'
+  const nombreUsuario = user?.nombre || user?.username || 'usuario'
   const fileRef = useRef()
   const [cartolas, setCartolas] = useState([])
   const [movimientos, setMovimientos] = useState([])
@@ -51,6 +53,11 @@ export default function Cartola() {
   const [resumen, setResumen] = useState(null)
   const [conciliando, setConciliando] = useState({})
   const [pagosSinConciliar, setPagosSinConciliar] = useState([])
+  const [pagosNoAplica, setPagosNoAplica] = useState([])   // conciliacion='no_aplica'
+  const [verExcluidos, setVerExcluidos] = useState(false)
+  const [marcarNoAplica, setMarcarNoAplica] = useState(null)  // pago en el modal
+  const [motivoNoAplica, setMotivoNoAplica] = useState('')
+  const [guardandoNoAplica, setGuardandoNoAplica] = useState(false)
   const [filtroPagosSC, setFiltroPagosSC] = useState('todos')
   const [periodoPagosSC, setPeriodoPagosSC] = useState('todos')
   const [otrosIngresosForm, setOtrosIngresosForm] = useState({})
@@ -64,7 +71,7 @@ export default function Cartola() {
   const loadCandidatos = async () => {
     const [{ data: pagos }, { data: cheques }, { data: otros }] = await Promise.all([
       supabase.from('pagos_cuota')
-        .select('id, monto, fecha_pago, concepto, socio_id, cheque_id, socios(id,nombre,apellido,numero_socio,rut), periodos_cuota(anio)')
+        .select('id, monto, fecha_pago, concepto, socio_id, cheque_id, conciliacion, socios(id,nombre,apellido,numero_socio,rut), periodos_cuota(anio)')
         .is('movimiento_id', null),
       // El criterio de candidatura es "sin movimiento", NO el estado. Además de los
       // 'por_depositar', entran los 'depositado' que siguen sin movimiento_id: el
@@ -80,8 +87,10 @@ export default function Cartola() {
     const norm = []
     // Cheques ya referenciados por un pago de cuota: se calzan vía el pago (el RPC
     // propaga el movimiento al cheque), así que no deben aparecer como candidato aparte.
+    // Se calcula sobre TODOS los pagos sin movimiento, incluidos los 'no_aplica':
+    // si no, el cheque de un pago excluido reaparecería como candidato suelto.
     const chequesDePago = new Set((pagos || []).map(p => p.cheque_id).filter(Boolean))
-    ;(pagos || []).forEach(p => norm.push({
+    ;(pagos || []).filter(p => p.conciliacion !== 'no_aplica').forEach(p => norm.push({
       tipo: 'pagos_cuota', id: p.id, monto: p.monto, fecha: p.fecha_pago,
       socio: p.socios, concepto: p.concepto || 'Cuota',
       detalle: p.periodos_cuota?.anio ? `Pago cuota ${p.periodos_cuota.anio}` : 'Pago de cuota',
@@ -104,13 +113,53 @@ export default function Cartola() {
     setCandidatos(norm)
   }
 
+  // Un pago marcado 'no_aplica' nunca va a aparecer en cartola (canje, saldo de
+  // apertura, cartola que el banco ya no entrega): sale de la operación de
+  // conciliación, pero sigue sumando normalmente en los reportes.
   const loadPagosSinConciliar = async () => {
     const { data } = await supabase
       .from('pagos_cuota')
       .select('*, socios(nombre,apellido,numero_socio), periodos_cuota(anio), cheques(numero,estado)')
       .is('movimiento_id', null)
       .order('fecha_pago', { ascending: false })
-    setPagosSinConciliar(data || [])
+    const todos = data || []
+    setPagosSinConciliar(todos.filter(p => p.conciliacion !== 'no_aplica'))
+    setPagosNoAplica(todos.filter(p => p.conciliacion === 'no_aplica'))
+  }
+
+  // ── Conciliación no aplica: marcar / revertir ──────────────
+  const abrirNoAplica = (pago) => { setMarcarNoAplica(pago); setMotivoNoAplica('') }
+
+  const handleMarcarNoAplica = async () => {
+    const pago = marcarNoAplica
+    const motivo = motivoNoAplica.trim()
+    if (!motivo) { showToast('El motivo es obligatorio: queda como respaldo de por qué este pago no se concilia', 'error'); return }
+    setGuardandoNoAplica(true)
+    // El motivo se agrega al comentario, nunca lo reemplaza.
+    const traza = `Conciliación no aplica — ${motivo} (${nombreUsuario}, ${new Date().toLocaleDateString('es-CL')})`
+    const { error } = await supabase.from('pagos_cuota').update({
+      conciliacion: 'no_aplica',
+      comentario: pago.comentario ? `${pago.comentario}\n${traza}` : traza,
+    }).eq('id', pago.id)
+    setGuardandoNoAplica(false)
+    if (error) { showToast('Error al marcar: ' + error.message, 'error'); return }
+    showToast('Pago excluido de la conciliación')
+    setMarcarNoAplica(null)
+    loadPagosSinConciliar()
+    loadCandidatos()
+  }
+
+  const handleRevertirNoAplica = async (pago) => {
+    if (!confirm(`¿Devolver este pago a la conciliación?\n\n${pago.socios ? `${pago.socios.nombre} ${pago.socios.apellido}` : 'Socio'} · ${formatearMontoConSimbolo(pago.monto)} del ${pago.fecha_pago?.split('-').reverse().join('/')}\n\nVolverá a aparecer como pendiente y como candidato de calce.`)) return
+    const traza = `Conciliación reactivada por ${nombreUsuario} el ${new Date().toLocaleDateString('es-CL')}`
+    const { error } = await supabase.from('pagos_cuota').update({
+      conciliacion: null,
+      comentario: pago.comentario ? `${pago.comentario}\n${traza}` : traza,
+    }).eq('id', pago.id)
+    if (error) { showToast('Error al revertir: ' + error.message, 'error'); return }
+    showToast('Pago devuelto a la conciliación')
+    loadPagosSinConciliar()
+    loadCandidatos()
   }
 
   // Pagos de Cuentas por Pagar pagados por una vía distinta al cheque. Se cargan
@@ -1766,7 +1815,8 @@ export default function Cartola() {
         </>
       )}
       {vista === 'sin_conciliar' && (() => {
-        const pagosFiltradosSC = pagosSinConciliar.filter(p => {
+        const basePagosSC = verExcluidos ? pagosNoAplica : pagosSinConciliar
+        const pagosFiltradosSC = basePagosSC.filter(p => {
           if (filtroPagosSC !== 'todos' && p.forma_pago !== filtroPagosSC) return false
           if (periodoPagosSC !== 'todos' && p.periodo_id !== periodoPagosSC) return false
           return true
@@ -1782,7 +1832,21 @@ export default function Cartola() {
                 <option value="todos">Todos los períodos</option>
                 {periodos.map(p => <option key={p.id} value={p.id}>{p.anio} — {formatearMontoConSimbolo(p.monto)}</option>)}
               </select>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                <button className={`btn btn-sm${verExcluidos ? '' : ' btn-primary'}`} onClick={() => setVerExcluidos(false)}>
+                  <i className="ti ti-alert-circle"></i> Pendientes ({pagosSinConciliar.length})
+                </button>
+                <button className={`btn btn-sm${verExcluidos ? ' btn-primary' : ''}`} onClick={() => setVerExcluidos(true)}>
+                  <i className="ti ti-circle-off"></i> Sin conciliación aplicable ({pagosNoAplica.length})
+                </button>
+              </div>
             </div>
+            {verExcluidos && (
+              <div style={{ padding: '0.7rem 0.9rem', borderRadius: 8, fontSize: 12, fontFamily: 'sans-serif', marginBottom: '1rem', background: 'rgba(55,138,221,0.1)', border: '0.5px solid rgba(55,138,221,0.3)', color: '#85b7eb' }}>
+                <i className="ti ti-info-circle"></i> Pagos que nunca aparecerán en cartola: canjes, saldos de apertura, o depósitos cuya cartola el banco ya no entrega.
+                Siguen sumando en los reportes financieros; solo salen de la conciliación. Si el banco entrega una cartola histórica, devuélvelos con <strong>Volver a pendiente</strong>.
+              </div>
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10, marginBottom: '1rem' }}>
               <div style={{ background: 'var(--navy-card)', border: '0.5px solid var(--border)', borderRadius: 8, padding: '0.85rem 1rem', borderLeft: '3px solid #fac775' }}>
                 <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 4 }}>Pagos sin conciliar</div>
@@ -1813,7 +1877,10 @@ export default function Cartola() {
 
             <div className="card">
               <div className="card-header">
-                <div className="card-title"><i className="ti ti-alert-circle"></i> Pagos registrados pendientes de aparecer en cartola</div>
+                <div className="card-title">
+                  <i className={`ti ${verExcluidos ? 'ti-circle-off' : 'ti-alert-circle'}`}></i>{' '}
+                  {verExcluidos ? 'Pagos sin conciliación aplicable' : 'Pagos registrados pendientes de aparecer en cartola'}
+                </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   {['todos','transferencia','cheque','efectivo'].map(f => (
                     <button key={f} className={`btn btn-sm${filtroPagosSC === f ? ' btn-primary' : ''}`} onClick={() => setFiltroPagosSC(f)}>
@@ -1823,12 +1890,15 @@ export default function Cartola() {
                 </div>
               </div>
               {pagosFiltradosSC.length === 0 ? (
-                <div className="empty-state"><i className="ti ti-circle-check" style={{ color: '#5dcaa5' }}></i>Todos los pagos registrados están conciliados con la cartola</div>
+                <div className="empty-state"><i className="ti ti-circle-check" style={{ color: '#5dcaa5' }}></i>
+                  {verExcluidos ? 'No hay pagos excluidos de la conciliación' : 'Todos los pagos registrados están conciliados con la cartola'}
+                </div>
               ) : (
                 <table>
                   <thead>
                     <tr>
                       <th>Socio</th><th>Fecha pago</th><th>Concepto</th><th>Período</th><th>Monto</th><th>Forma pago</th><th>Detalle</th>
+                      {editable && esAdmin && <th></th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -1860,9 +1930,24 @@ export default function Cartola() {
                             {p.forma_pago === 'efectivo' && <span className="badge" style={{ background: 'rgba(29,158,117,0.15)', color: '#5dcaa5', border: '0.5px solid rgba(29,158,117,0.3)' }}>Efectivo</span>}
                             {!['transferencia','cheque','efectivo'].includes(p.forma_pago) && <span className="badge badge-inactive">{p.forma_pago || '—'}</span>}
                           </td>
-                          <td style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                          <td style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', whiteSpace: 'pre-line' }}>
                             {p.cheques ? `Cheque N°${p.cheques.numero} · ${p.cheques.estado}` : (p.comentario || 'Registrado manualmente')}
                           </td>
+                          {editable && esAdmin && (
+                            <td>
+                              {verExcluidos ? (
+                                <button className="btn btn-sm" style={{ color: '#fac775', borderColor: 'rgba(239,159,39,0.4)' }}
+                                  title="Devolver este pago a la conciliación" onClick={() => handleRevertirNoAplica(p)}>
+                                  <i className="ti ti-arrow-back-up"></i> Volver a pendiente
+                                </button>
+                              ) : (
+                                <button className="btn btn-sm" style={{ color: '#85b7eb', borderColor: 'rgba(55,138,221,0.4)' }}
+                                  title="Este pago nunca aparecerá en cartola" onClick={() => abrirNoAplica(p)}>
+                                  <i className="ti ti-circle-off"></i>
+                                </button>
+                              )}
+                            </td>
+                          )}
                         </tr>
                       )
                     })}
@@ -1979,6 +2064,41 @@ export default function Cartola() {
             )}
           </div>
         </>
+      )}
+
+      {/* Modal: marcar un pago como "conciliación no aplica" */}
+      {marcarNoAplica && (
+        <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setMarcarNoAplica(null)}>
+          <div className="modal" style={{ width: 520 }}>
+            <div className="modal-header">
+              <div className="modal-title">Conciliación no aplica</div>
+              <button className="btn btn-sm" onClick={() => setMarcarNoAplica(null)}><i className="ti ti-x"></i></button>
+            </div>
+            <div style={{ padding: '0.5rem 1.25rem 0.75rem', fontSize: 13, color: '#c8d0dc', fontFamily: 'sans-serif' }}>
+              <strong>{marcarNoAplica.socios ? `${marcarNoAplica.socios.nombre} ${marcarNoAplica.socios.apellido}` : 'Socio'}</strong>{' '}
+              · {formatearMontoConSimbolo(marcarNoAplica.monto)} · {marcarNoAplica.fecha_pago?.split('-').reverse().join('/')}
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                El pago sale del panel de pendientes y deja de ofrecerse como candidato de calce.
+                Sigue sumando igual en los reportes financieros. Es reversible desde "Sin conciliación aplicable".
+              </div>
+            </div>
+            <div className="form-grid">
+              <div className="form-group full"><label>Motivo *</label>
+                <input value={motivoNoAplica} onChange={e => setMotivoNoAplica(e.target.value)}
+                  placeholder="Ej: canje por servicios · saldo de apertura · el banco ya no entrega esta cartola" />
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginTop: 4 }}>
+                  Se agrega al comentario del pago junto a tu nombre y la fecha.
+                </div>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn" onClick={() => setMarcarNoAplica(null)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleMarcarNoAplica} disabled={guardandoNoAplica || !motivoNoAplica.trim()}>
+                {guardandoNoAplica ? <><i className="ti ti-loader"></i> Guardando…</> : <><i className="ti ti-circle-off"></i> Excluir de la conciliación</>}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {selectorCheque && (
