@@ -182,6 +182,31 @@ export default function ReporteFinanciero() {
 
       const totalEgresos = Object.values(egresosAgrupados).reduce((t, g) => t + g.total, 0)
 
+      // Cheques recibidos aún no cobrados por el banco: el pago ya es ingreso del
+      // período (fecha_pago), pero no hay movimiento en cartola todavía. Explica
+      // el desfase normal entre registrar el cheque y que el banco lo cobre.
+      const chequesPorCobrar = pagos.filter(p => p.cheque_id && !p.movimiento_id)
+      let detalleChequesPorCobrar = []
+      if (chequesPorCobrar.length > 0) {
+        // El socio sale del cheque, no del pago: es quien lo giró.
+        const { data: chs } = await supabase.from('cheques')
+          .select('id, numero, socios(nombre,apellido,numero_socio)')
+          .in('id', chequesPorCobrar.map(p => p.cheque_id))
+        const porId = Object.fromEntries((chs || []).map(c => [c.id, c]))
+        detalleChequesPorCobrar = chequesPorCobrar.map(p => {
+          const c = porId[p.cheque_id]
+          const soc = c?.socios
+          return {
+            fecha: p.fecha_pago,
+            proveedor: soc ? `${soc.nombre} ${soc.apellido} (${soc.numero_socio})` : 'Socio no identificado',
+            descripcion: '',
+            cheque: c?.numero ? `N°${c.numero}` : '',
+            monto: p.monto,
+          }
+        }).sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
+      }
+      const totalChequesPorCobrar = chequesPorCobrar.reduce((t, p) => t + p.monto, 0)
+
       // Si no hay cartola del mes final, calcular saldo por diferencia
       if (saldoCtaCte === null) {
         saldoCtaCte = saldoAnterior + totalPeriodoIng - totalEgresos
@@ -193,6 +218,7 @@ export default function ReporteFinanciero() {
         cuotasSociales, otrosIngAgrupados,
         totalCuotas, totalOtrosIng, totalPeriodoIng,
         egresosAgrupados, totalEgresos,
+        totalChequesPorCobrar, detalleChequesPorCobrar,
         saldoAnterior, saldoCtaCte,
         saldoAnteriorCalculado, saldoCtaCteCalculado,
         totalIngresos: totalPeriodoIng + saldoAnterior,
@@ -324,6 +350,15 @@ export default function ReporteFinanciero() {
 
   const cuadra = datos && datos.totalIngresos === datos.totalEgresosMasSaldo
   const diferencia = datos ? datos.totalIngresos - datos.totalEgresosMasSaldo : 0
+  // La diferencia queda explicada si coincide con los cheques por cobrar.
+  // Tolerancia de $1 por redondeos. Se compara el valor absoluto: el signo del
+  // descuadre no cambia que la causa sea el desfase del cobro bancario.
+  const porCobrar = datos?.totalChequesPorCobrar || 0
+  const nCheques = datos?.detalleChequesPorCobrar?.length || 0
+  const difAbs = Math.abs(diferencia)
+  const difExplicada = !cuadra && porCobrar > 0 && Math.abs(difAbs - porCobrar) <= 1
+  const difParcial = !cuadra && porCobrar > 0 && difAbs - porCobrar > 1
+  const sinExplicar = difAbs - porCobrar
 
   return (
     <div>
@@ -465,13 +500,32 @@ export default function ReporteFinanciero() {
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>Ingresos coinciden con egresos + saldo</div>
                     </div>
                   </>
+                ) : difExplicada ? (
+                  <>
+                    <i className="ti ti-info-circle" style={{ fontSize: 28, color: '#85b7eb' }}></i>
+                    <div>
+                      <div style={{ fontSize: 15, color: '#85b7eb', fontWeight: 'bold' }}>
+                        Diferencia explicada: {formatearMontoConSimbolo(porCobrar)} en cheques recibidos por cobrar en banco ({nCheques} cheque{nCheques === 1 ? '' : 's'})
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                        Ya son ingreso del período, pero el banco todavía no los cobró: no hay movimiento en cartola.
+                      </div>
+                    </div>
+                  </>
                 ) : (
                   <>
                     <i className="ti ti-alert-triangle" style={{ fontSize: 28, color: '#fac775' }}></i>
                     <div>
-                      <div style={{ fontSize: 15, color: '#fac775', fontWeight: 'bold' }}>Diferencia: {formatearMontoConSimbolo(Math.abs(diferencia))}</div>
+                      <div style={{ fontSize: 15, color: '#fac775', fontWeight: 'bold' }}>Diferencia: {formatearMontoConSimbolo(difAbs)}</div>
                       <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
-                        {diferencia > 0 ? 'Hay ingresos sin contraparte en egresos+saldo' : 'Hay egresos+saldo sin contraparte en ingresos'}
+                        {difParcial ? (
+                          <>
+                            De {formatearMontoConSimbolo(difAbs)}, {formatearMontoConSimbolo(porCobrar)} corresponde a cheques por cobrar;{' '}
+                            <strong style={{ color: '#f09595' }}>{formatearMontoConSimbolo(sinExplicar)} sin explicar</strong>
+                          </>
+                        ) : (
+                          diferencia > 0 ? 'Hay ingresos sin contraparte en egresos+saldo' : 'Hay egresos+saldo sin contraparte en ingresos'
+                        )}
                       </div>
                     </div>
                   </>
@@ -488,6 +542,14 @@ export default function ReporteFinanciero() {
                 </div>
               </div>
             </div>
+            {/* Detalle expandible de los cheques que explican (total o en parte) la diferencia */}
+            {!cuadra && porCobrar > 0 && renderFila(
+              'cheques-por-cobrar',
+              `Cheques recibidos por cobrar en banco (${nCheques})`,
+              porCobrar,
+              datos.detalleChequesPorCobrar,
+              '#85b7eb',
+            )}
           </div>
         </>
       )}
