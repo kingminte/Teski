@@ -4,7 +4,7 @@ import { useToast } from '../lib/useToast.jsx'
 import { useAuth } from '../lib/useAuth'
 import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/montos'
 import * as XLSX from 'xlsx'
-import { parsearCartolaSantander, extraerCabeceraCartola, extraerResumenCartola, parsearUltimosMovimientos, extraerCabeceraUltimosMovimientos, detectarTipoArchivo, extraerMesAnioDeNombre } from '../lib/parsearCartola'
+import { parsearCartolaSantander, extraerCabeceraCartola, extraerResumenCartola, parsearUltimosMovimientos, extraerCabeceraUltimosMovimientos, detectarTipoArchivo, extraerMesAnioDeNombre, mesAnioDominante } from '../lib/parsearCartola'
 
 const NOMBRES_MES = ['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
@@ -324,21 +324,13 @@ export default function Cartola() {
     if (!['xls','xlsx','csv'].includes(ext)) { showToast('Formato no soportado', 'error'); return }
     setUploading(true)
     try {
-      // 1. Verificar duplicado por nombre
-      const { data: existente } = await supabase.from('cartolas').select('id').eq('nombre_archivo', file.name).maybeSingle()
-      if (existente) {
-        showToast(`La cartola "${file.name}" ya fue cargada anteriormente`, 'error')
-        setUploading(false)
-        return
-      }
-
       const rows = await parseFile(file)
 
-      // 2. Detectar tipo de archivo
+      // 1. Detectar tipo de archivo
       const tipoArchivo = detectarTipoArchivo(file.name, rows)
       const esUltimosMovimientos = tipoArchivo === 'ultimos_movimientos'
 
-      // 3. Parsear según tipo
+      // 2. Parsear según tipo
       let movs, cabecera, resumenData
       if (esUltimosMovimientos) {
         movs = parsearUltimosMovimientos(rows)
@@ -352,21 +344,85 @@ export default function Cartola() {
 
       if (movs.length === 0) { showToast('No se encontraron movimientos. Verifica el formato.', 'error'); setUploading(false); return }
 
-      // 4. Verificar N° de documento duplicado (solo para cartola mensual con n_doc real)
+      // 3. Fechar la cartola ANTES de validar duplicados, para poder decir en el
+      // mensaje de error qué período creyó detectar. Orden de preferencia:
+      // cabecera del Excel → nombre del archivo → mes dominante de los propios
+      // movimientos. Nunca el mes actual: antes, si ninguna fuente daba el mes,
+      // se estampaba el mes de hoy en `periodo` y mes/anio quedaban en null.
+      const dominante = mesAnioDominante(movs)
+      let mes = cabecera.mes
+      let anio = cabecera.anio
+      let origenPeriodo = (mes && anio) ? 'cabecera del archivo' : null
+
+      if (!mes || !anio) {
+        const deNombre = extraerMesAnioDeNombre(file.name)
+        if (deNombre.mes && deNombre.anio) {
+          mes = deNombre.mes
+          anio = deNombre.anio
+          origenPeriodo = 'nombre del archivo'
+        }
+      }
+      if (!mes || !anio) {
+        if (dominante.mes && dominante.anio) {
+          mes = dominante.mes
+          anio = dominante.anio
+          origenPeriodo = 'fechas de los movimientos'
+        }
+      }
+      // Conservador: si ninguna fuente lo determina, no se inventa un período.
+      if (!mes || !anio) {
+        showToast('No se pudo determinar el mes de la cartola (ni en la cabecera, ni en el nombre del archivo, ni en las fechas de los movimientos). Renombra el archivo incluyendo el mes y el año, por ejemplo "Cartola Septiembre 2023.xlsx".', 'error')
+        setUploading(false)
+        return
+      }
+
+      const periodoDetectado = `${NOMBRES_MES[mes]} ${anio}`
+      const fechasOrdenadas = movs.map(m => m.fecha).filter(Boolean).sort()
+      const rangoArchivo = fechasOrdenadas.length
+        ? `${fechasOrdenadas[0].split('-').reverse().join('/')} a ${fechasOrdenadas[fechasOrdenadas.length - 1].split('-').reverse().join('/')}`
+        : '—'
+      // Contexto común a los dos mensajes de duplicado: sin esto no se podía
+      // saber qué período había detectado el sistema al rechazar el archivo.
+      const ctx = `Detectado: ${periodoDetectado} (según ${origenPeriodo}). El archivo trae ${movs.length} movimientos del ${rangoArchivo}.`
+
+      // 4. Duplicado por nombre de archivo
+      const { data: existente } = await supabase.from('cartolas').select('id, mes, anio').eq('nombre_archivo', file.name).maybeSingle()
+      if (existente) {
+        const perExistente = existente.mes && existente.anio ? ` (${NOMBRES_MES[existente.mes]} ${existente.anio})` : ''
+        showToast(`La cartola "${file.name}"${perExistente} ya fue cargada anteriormente. ${ctx}`, 'error')
+        setUploading(false)
+        return
+      }
+
+      // 5. Duplicado por N° de documento (solo cartola mensual con n_doc real).
+      // Ojo: la comparación es global, contra TODOS los movimientos de todas las
+      // cartolas. Se informa de qué período es cada choque, porque el caso típico
+      // es un rango de descarga que se pasa al mes vecino ya cargado.
       if (!esUltimosMovimientos) {
         const nDocs = movs.filter(m => m.n_documento).map(m => m.n_documento)
         if (nDocs.length > 0) {
-          const { data: docsDuplicados } = await supabase.from('movimientos').select('n_documento').in('n_documento', nDocs)
+          const { data: docsDuplicados } = await supabase.from('movimientos').select('n_documento, fecha').in('n_documento', nDocs)
           if (docsDuplicados?.length > 0) {
-            const dupes = docsDuplicados.map(d => d.n_documento).join(', ')
-            showToast(`Movimientos duplicados detectados (N° doc: ${dupes}). Esta cartola ya fue registrada.`, 'error')
+            const dupes = docsDuplicados
+              .slice(0, 6)
+              .map(d => `${d.n_documento}${d.fecha ? ` (ya cargado en ${NOMBRES_MES[+d.fecha.slice(5, 7)]} ${d.fecha.slice(0, 4)})` : ''}`)
+              .join(', ')
+            const mas = docsDuplicados.length > 6 ? ` y ${docsDuplicados.length - 6} más` : ''
+            showToast(`Movimientos ya registrados (N° doc: ${dupes}${mas}). ${ctx}`, 'error')
             setUploading(false)
             return
           }
         }
       }
 
-      // 5. Cruzar con socios por RUT (directo o vía alias aprendido)
+      // Aviso no bloqueante: el archivo abarca más de un mes. Es la causa típica
+      // de un choque de N° de documento con un mes vecino ya cargado.
+      if (dominante.meses.length > 1) {
+        const detalle = dominante.meses.map(x => `${x.periodo} (${x.movimientos})`).join(', ')
+        showToast(`Atención: el archivo abarca varios meses — ${detalle}. Se guardará como ${periodoDetectado}.`, 'error')
+      }
+
+      // 6. Cruzar con socios por RUT (directo o vía alias aprendido)
       const movsConCalce = movs.map(m => {
         if (!m.rut_detectado) return m
         const rutMov = normRut(m.rut_detectado)
@@ -377,7 +433,7 @@ export default function Cartola() {
         return m
       })
 
-      // 6. Calcular resumen financiero
+      // 7. Calcular resumen financiero
       let resumenCartola
       if (resumenData) {
         resumenCartola = {
@@ -397,21 +453,15 @@ export default function Cartola() {
         }
       }
 
-      // 7. Crear cartola
-      let mes = cabecera.mes
-      let anio = cabecera.anio
-      if (!mes || !anio) {
-        const deNombre = extraerMesAnioDeNombre(file.name)
-        mes = mes || deNombre.mes
-        anio = anio || deNombre.anio
-      }
-      const periodo = (mes && anio) ? `${anio}-${String(mes).padStart(2,'0')}` : new Date().toISOString().slice(0, 7)
+      // 8. Crear cartola. mes/anio ya quedaron resueltos en el paso 3 y son
+      // obligatorios: acá no se vuelve a adivinar nada.
+      const periodo = `${anio}-${String(mes).padStart(2, '0')}`
       const { data: cartola, error } = await supabase.from('cartolas')
         .insert({
           nombre_archivo: file.name,
           periodo,
-          mes: mes || null,
-          anio: anio || null,
+          mes,
+          anio,
           total_movimientos: movsConCalce.length,
           banco: cabecera.banco || 'Santander',
           tipo: tipoArchivo,
@@ -420,7 +470,7 @@ export default function Cartola() {
         .select().single()
       if (error) throw new Error('Error creando cartola: ' + error.message)
 
-      // 8. Insertar movimientos
+      // 9. Insertar movimientos
       const toInsert = movsConCalce.map(m => ({ ...m, cartola_id: cartola.id }))
       const { error: mErr } = await supabase.from('movimientos').insert(toInsert)
       if (mErr) throw new Error('Error guardando movimientos: ' + mErr.message)

@@ -364,6 +364,31 @@ export function extraerCabeceraCartola(rows) {
   return info
 }
 
+// Mes/año dominante de los movimientos ya parseados. Último recurso para fechar
+// una cartola cuando ni la cabecera ni el nombre del archivo lo dicen: el mes con
+// más movimientos es el período de la cartola. Sale del contenido del archivo, a
+// diferencia del viejo fallback al mes actual, que inventaba el período.
+export function mesAnioDominante(movimientos) {
+  const conteo = {}
+  for (const m of movimientos || []) {
+    if (!m?.fecha) continue
+    const clave = m.fecha.slice(0, 7)   // 'YYYY-MM'
+    conteo[clave] = (conteo[clave] || 0) + 1
+  }
+  const entradas = Object.entries(conteo)
+  if (entradas.length === 0) return { mes: null, anio: null, meses: [] }
+  // Empate: gana el mes más antiguo, para no adelantar el período.
+  entradas.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  const [clave] = entradas[0]
+  return {
+    mes: parseInt(clave.slice(5, 7), 10),
+    anio: parseInt(clave.slice(0, 4), 10),
+    // Todos los meses presentes, ordenados: sirve para avisar que el archivo
+    // abarca más de un mes (un rango de descarga mal acotado).
+    meses: entradas.map(([k, n]) => ({ periodo: k, movimientos: n })).sort((a, b) => a.periodo.localeCompare(b.periodo)),
+  }
+}
+
 export function extraerMesAnioDeNombre(nombreArchivo) {
   const nombre = (nombreArchivo || '').toLowerCase()
   for (const [mesNombre, mesNum] of Object.entries(MESES)) {
