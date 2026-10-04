@@ -394,21 +394,38 @@ export default function Cartola() {
         return
       }
 
-      // 5. Duplicado por N° de documento (solo cartola mensual con n_doc real).
-      // Ojo: la comparación es global, contra TODOS los movimientos de todas las
-      // cartolas. Se informa de qué período es cada choque, porque el caso típico
-      // es un rango de descarga que se pasa al mes vecino ya cargado.
+      // 5. Duplicado de movimientos (solo cartola mensual con n_doc real).
+      //
+      // La llave es (n_documento + fecha + monto), no n_documento solo. El N° de
+      // documento de Santander NO identifica un movimiento: es un número de
+      // lote que se repite. Y el mismo documento puede tener cargos legítimos en
+      // fechas distintas — un cheque protestado y re-presentado al mes siguiente
+      // genera dos cargos reales con el mismo folio. Con la llave vieja ese
+      // archivo quedaba bloqueado entero.
+      //
+      // La comparación sigue siendo global (sin acotar período) a propósito: con
+      // la llave triple, una coincidencia exacta ES un duplicado real sin
+      // importar de qué mes venga, así que acotar solo abriría la puerta a
+      // re-subir una cartola antigua.
       if (!esUltimosMovimientos) {
-        const nDocs = movs.filter(m => m.n_documento).map(m => m.n_documento)
+        const conDoc = movs.filter(m => m.n_documento)
+        const nDocs = conDoc.map(m => m.n_documento)
         if (nDocs.length > 0) {
-          const { data: docsDuplicados } = await supabase.from('movimientos').select('n_documento, fecha').in('n_documento', nDocs)
-          if (docsDuplicados?.length > 0) {
-            const dupes = docsDuplicados
+          const claveMov = (d, f, mt) => `${d}|${f}|${mt}`
+          // Se traen los candidatos por n_documento (es lo indexable) y la
+          // coincidencia exacta de los tres campos se decide acá.
+          const { data: candidatos } = await supabase.from('movimientos')
+            .select('n_documento, fecha, monto').in('n_documento', nDocs)
+          const yaCargados = new Set((candidatos || []).map(d => claveMov(d.n_documento, d.fecha, d.monto)))
+          const choques = conDoc.filter(m => yaCargados.has(claveMov(m.n_documento, m.fecha, m.monto)))
+
+          if (choques.length > 0) {
+            const dupes = choques
               .slice(0, 6)
-              .map(d => `${d.n_documento}${d.fecha ? ` (ya cargado en ${NOMBRES_MES[+d.fecha.slice(5, 7)]} ${d.fecha.slice(0, 4)})` : ''}`)
+              .map(m => `${m.n_documento} del ${m.fecha.split('-').reverse().join('/')} por ${formatearMontoConSimbolo(Math.abs(m.monto))}`)
               .join(', ')
-            const mas = docsDuplicados.length > 6 ? ` y ${docsDuplicados.length - 6} más` : ''
-            showToast(`Movimientos ya registrados (N° doc: ${dupes}${mas}). ${ctx}`, 'error')
+            const mas = choques.length > 6 ? ` y ${choques.length - 6} más` : ''
+            showToast(`${choques.length} movimiento(s) ya registrado(s): ${dupes}${mas}. ${ctx}`, 'error')
             setUploading(false)
             return
           }
