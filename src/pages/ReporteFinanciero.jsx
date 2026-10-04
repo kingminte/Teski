@@ -97,11 +97,41 @@ export default function ReporteFinanciero() {
       const movimientos = movRes.data || []
       const pagosCP = pagosCPRes.data || []
 
-      // Saldo anterior: cartola del mes anterior a fechaDesde
+      // Saldo anterior: saldo_final de la cartola del mes previo al rango.
       const ant = mesAnterior(fechaDesde)
       const { data: cartolaAnt } = await supabase.from('cartolas')
         .select('saldo_final').eq('mes', ant.mes).eq('anio', ant.anio).limit(1).maybeSingle()
+
       let saldoAnterior = cartolaAnt?.saldo_final ?? null
+      let saldoAnteriorOrigen = saldoAnterior === null ? null : 'cartola_previa'
+      let aperturaRango = null
+
+      // Fallback: la historia bancaria del sistema parte en enero 2022, así que
+      // un reporte de 2022 no tiene (ni va a tener) cartola de diciembre 2021 y
+      // quedaba con saldo anterior $0, descuadrando el año completo. El
+      // saldo_inicial de la primera cartola DEL RANGO es, por definición, el
+      // saldo de cierre del mes anterior.
+      if (saldoAnterior === null) {
+        const { data: enRango } = await supabase.from('cartolas')
+          .select('anio,mes,saldo_inicial').gte('anio', aD).lte('anio', aH)
+        const clave = (c) => c.anio * 100 + c.mes
+        const desdeK = aD * 100 + mD
+        const hastaK = aH * 100 + mH
+        // Se toma la PRIMERA cartola del rango tal cual está: no se saltan meses
+        // buscando un saldo distinto de cero. Las cartolas de ene–abr 2026
+        // tienen saldo_inicial = 0 por un artefacto de carga histórica, y ese es
+        // un problema de datos que no se arregla acá.
+        const primera = (enRango || [])
+          .filter(c => clave(c) >= desdeK && clave(c) <= hastaK)
+          .sort((a, b) => clave(a) - clave(b))[0]
+        if (primera) {
+          saldoAnterior = primera.saldo_inicial ?? 0
+          saldoAnteriorOrigen = 'apertura_rango'
+          aperturaRango = { anio: primera.anio, mes: primera.mes }
+        }
+      }
+
+      // Sin cartola previa y sin ninguna cartola en el rango: $0, como antes.
       let saldoAnteriorCalculado = false
       if (saldoAnterior === null) {
         saldoAnterior = 0
@@ -243,6 +273,7 @@ export default function ReporteFinanciero() {
         totalCanjes, detalleCanjes,
         saldoAnterior, saldoCtaCte,
         saldoAnteriorCalculado, saldoCtaCteCalculado,
+        saldoAnteriorOrigen, aperturaRango,
         totalIngresos: totalPeriodoIng + saldoAnterior,
         totalEgresosMasSaldo: totalEgresos + saldoCtaCte,
       })
@@ -477,9 +508,14 @@ export default function ReporteFinanciero() {
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.6rem 1rem', background: 'rgba(201,168,76,0.05)', fontSize: 13, alignItems: 'center', gap: 8 }}>
                 <span style={{ color: datos.saldoAnteriorCalculado ? '#f09595' : 'var(--text-muted)' }}>
                   MÁS: Saldo anterior
+                  {datos.saldoAnteriorOrigen === 'apertura_rango' && datos.aperturaRango && (
+                    <span style={{ fontSize: 10, marginLeft: 6, color: '#85b7eb', fontStyle: 'italic', fontFamily: 'sans-serif' }}>
+                      (saldo de apertura de {NOMBRES_MES[datos.aperturaRango.mes]} {datos.aperturaRango.anio} — no hay cartola del mes previo)
+                    </span>
+                  )}
                   {datos.saldoAnteriorCalculado && (
                     <span style={{ fontSize: 10, marginLeft: 6, color: '#f09595', fontStyle: 'italic', fontFamily: 'sans-serif' }}>
-                      (calculado por diferencia — cartola no disponible)
+                      (sin cartola previa ni cartolas en el rango — asumido $0)
                     </span>
                   )}
                 </span>
