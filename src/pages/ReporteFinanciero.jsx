@@ -252,6 +252,19 @@ export default function ReporteFinanciero() {
       // diseño. Son ingreso del período y nunca tendrán movimiento en cartola,
       // así que explican diferencia igual que un cheque sin cobrar.
       const canjes = pagos.filter(p => p.forma_pago === 'canje')
+      const totalCanjesIngreso = canjes.reduce((t, p) => t + p.monto, 0)
+
+      // Lado gasto del canje: el servicio con que se saldó la cuota. Ya se cuenta
+      // como egreso normal en su categoría; acá solo se usa para netear.
+      const canjesGasto = pagosCP.filter(p => p.medio_pago === 'canje')
+      const totalCanjesGasto = canjesGasto.reduce((t, p) => t + p.monto, 0)
+
+      // Un canje completo (ingreso y gasto en el mismo rango) se netea solo y no
+      // deja diferencia que explicar. Solo el remanente sin contrapartida la
+      // explica, con piso en 0: un gasto canje mayor que el ingreso no es una
+      // partida explicativa, es otro problema.
+      const totalCanjes = Math.max(0, totalCanjesIngreso - totalCanjesGasto)
+
       const detalleCanjes = canjes.map(p => ({
         fecha: p.fecha_pago,
         proveedor: p.socios ? `${p.socios.nombre} ${p.socios.apellido} (${p.socios.numero_socio})` : 'Socio no identificado',
@@ -259,7 +272,6 @@ export default function ReporteFinanciero() {
         cheque: '',
         monto: p.monto,
       })).sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''))
-      const totalCanjes = canjes.reduce((t, p) => t + p.monto, 0)
 
       // Pagos sin flujo bancario: el resto de los 'no_aplica' que no son canje
       // (saldos de apertura de la tesorería anterior, depósitos cuya cartola el
@@ -288,6 +300,7 @@ export default function ReporteFinanciero() {
         egresosAgrupados, totalEgresos,
         totalChequesPorCobrar, detalleChequesPorCobrar,
         totalCanjes, detalleCanjes,
+        totalCanjesIngreso, totalCanjesGasto,
         totalSinFlujo, detalleSinFlujo,
         saldoAnterior, saldoCtaCte,
         saldoAnteriorCalculado, saldoCtaCteCalculado,
@@ -439,9 +452,11 @@ export default function ReporteFinanciero() {
       corto: 'a pagos por canje',
       total: datos?.totalCanjes || 0,
       items: datos?.detalleCanjes || [],
-      etiqueta: (n) => `${formatearMontoConSimbolo(datos.totalCanjes)} en pagos por canje (${n} pago${n === 1 ? '' : 's'})`,
-      linea: (n) => `Pagos por canje (${n})`,
-      nota: 'Cuotas saldadas con servicios: no generan flujo bancario por diseño.',
+      etiqueta: (n) => `${formatearMontoConSimbolo(datos.totalCanjes)} en pagos por canje${datos.totalCanjesGasto > 0 ? ' (neto)' : ''} (${n} pago${n === 1 ? '' : 's'})`,
+      linea: (n) => `Pagos por canje${datos.totalCanjesGasto > 0 ? ' — neto de su contrapartida de gasto' : ''} (${n})`,
+      nota: datos?.totalCanjesGasto > 0
+        ? `Cuotas saldadas con servicios: no generan flujo bancario. Del ingreso por canje (${formatearMontoConSimbolo(datos.totalCanjesIngreso)}) se descuenta el gasto por canje del rango (${formatearMontoConSimbolo(datos.totalCanjesGasto)}), que ya está contado en los egresos.`
+        : 'Cuotas saldadas con servicios: no generan flujo bancario por diseño.',
     },
     {
       id: 'sin-flujo-bancario',

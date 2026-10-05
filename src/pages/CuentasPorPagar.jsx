@@ -8,9 +8,15 @@ import { leerEstadoCuenta, recalcularCuenta, obtenerChequeraYFolio } from '../li
 const MEDIOS_PAGO = [
   { value: 'cheque', label: 'Cheque' },
   { value: 'transferencia', label: 'Transferencia' },
+  { value: 'canje', label: 'Canje / Compensación' },
   { value: 'efectivo', label: 'Efectivo' },
   { value: 'otro', label: 'Otro' },
 ]
+
+// Lado gasto de un canje: la cuota de un socio se salda con servicios, así que
+// no hay flujo bancario y el comentario es el único respaldo. Espejo del
+// placeholder del formulario de pago de cuotas.
+const PLACEHOLDER_CANJE = 'Describe la compensación: qué cuota/pago de socio salda este gasto y quién lo autorizó'
 
 const CATEGORIA_DEFAULT = 'Otros gastos'
 
@@ -277,6 +283,9 @@ export default function CuentasPorPagar() {
     if (!cuenta) return
     const monto = parsearMonto(montoPago)
     if (monto <= 0) { showToast('Monto inválido', 'error'); return }
+    if (formPago.medio_pago === 'canje' && !formPago.comentario.trim()) {
+      showToast('Un canje necesita comentario: describe qué cuota de socio salda este gasto y quién lo autorizó', 'error'); return
+    }
 
     setSavingPago(true)
 
@@ -1069,8 +1078,15 @@ export default function CuentasPorPagar() {
                   </select>
                 </div>
               )}
-              <div className="form-group full"><label>Comentario</label>
-                <input value={formPago.comentario} onChange={e => setFormPago(f => ({ ...f, comentario: e.target.value }))} />
+              <div className="form-group full"><label>Comentario{formPago.medio_pago === 'canje' ? ' *' : ''}</label>
+                <input value={formPago.comentario}
+                  placeholder={formPago.medio_pago === 'canje' ? PLACEHOLDER_CANJE : ''}
+                  onChange={e => setFormPago(f => ({ ...f, comentario: e.target.value }))} />
+                {formPago.medio_pago === 'canje' && (
+                  <div style={{ fontSize: 11, color: '#fac775', fontFamily: 'sans-serif', marginTop: 4 }}>
+                    <i className="ti ti-info-circle"></i> El canje no genera movimiento bancario: este comentario es su único respaldo.
+                  </div>
+                )}
               </div>
             </div>
             <div className="modal-footer">

@@ -1024,8 +1024,10 @@ export default function Cartola() {
 
   // Candidatos para un cargo: pagos CxP sin conciliar y de monto exacto. El monto
   // del cargo viene negativo en la cartola; el del pago es positivo.
+  // Los pagos por canje quedan fuera: saldan la cuenta con servicios, nunca van
+  // a tener un cargo bancario que calzar.
   const candidatosPagoCxP = (mov) =>
-    pagosCxP.filter(p => !p.movimiento_id && p.monto === Math.abs(mov.monto))
+    pagosCxP.filter(p => !p.movimiento_id && p.medio_pago !== 'canje' && p.monto === Math.abs(mov.monto))
 
   const pagoCxPDe = (movId) => pagosCxP.find(p => p.movimiento_id === movId)
 
