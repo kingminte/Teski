@@ -5,6 +5,7 @@ import { useAuth } from '../lib/useAuth'
 import { formatearMontoConSimbolo, parsearMonto, formatearMonto } from '../lib/montos'
 import * as XLSX from 'xlsx'
 import { parsearCartolaSantander, extraerCabeceraCartola, extraerResumenCartola, parsearUltimosMovimientos, extraerCabeceraUltimosMovimientos, detectarTipoArchivo, extraerMesAnioDeNombre, mesAnioDominante } from '../lib/parsearCartola'
+import { resolverCategoriaCargo } from '../lib/categorias'
 
 const NOMBRES_MES = ['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
 
@@ -53,6 +54,17 @@ export default function Cartola() {
   const [resumen, setResumen] = useState(null)
   const [conciliando, setConciliando] = useState({})
   const [pagosSinConciliar, setPagosSinConciliar] = useState([])
+  // Categorización de cargos y devoluciones vinculadas
+  const [catPorCheque, setCatPorCheque] = useState({})         // chequera_detalle_id -> categoria
+  const [cuentaPorMov, setCuentaPorMov] = useState({})         // movimiento_id -> categoria de la cuenta
+  const [guardandoCat, setGuardandoCat] = useState(null)       // id del movimiento en curso
+  const [cargosSinCat, setCargosSinCat] = useState([])         // vista de tanda, todas las cartolas
+  const [loadingTanda, setLoadingTanda] = useState(false)
+  const [devolucionDe, setDevolucionDe] = useState({})         // movimiento_id -> cargo original
+  const [selectorDevolucion, setSelectorDevolucion] = useState(null)  // { abono, candidatos }
+  const [devolucionSel, setDevolucionSel] = useState('')
+  const [guardandoDev, setGuardandoDev] = useState(false)
+
   const [pagosNoAplica, setPagosNoAplica] = useState([])   // conciliacion='no_aplica'
   const [verExcluidos, setVerExcluidos] = useState(false)
   const [marcarNoAplica, setMarcarNoAplica] = useState(null)  // pago en el modal
@@ -213,13 +225,123 @@ export default function Cartola() {
     }
   }
 
+  // Categorías de gasto para los selectores: planCuentas ya viene cargado.
+  const categoriasGasto = planCuentas.filter(p => p.tipo === 'gasto')
+
+  // Cascada compartida con el reporte (src/lib/categorias.js).
+  const categoriaDeMovimiento = (m) => resolverCategoriaCargo({
+    cheque: catPorCheque[m.chequera_detalle_id],
+    cuenta: cuentaPorMov[m.id],
+    movimiento: m.categoria,
+  })
+  // Un cargo "sin vínculo" es el que no llegó por cheque ni por cuenta por
+  // pagar: su única vía de categoría es escribirla sobre el movimiento.
+  const sinVinculo = (m) => !m.chequera_detalle_id && !cuentaPorMov[m.id]
+
+  // ── Parte B: categorizar un cargo ──────────────────────────
+  const handleCategorizar = async (mov, categoria) => {
+    setGuardandoCat(mov.id)
+    const { error } = await supabase.from('movimientos')
+      .update({ categoria: categoria || null }).eq('id', mov.id)
+    setGuardandoCat(null)
+    if (error) { showToast('Error al guardar la categoría: ' + error.message, 'error'); return }
+    // Actualización local: evita recargar toda la cartola por cada fila.
+    setMovimientos(prev => prev.map(x => x.id === mov.id ? { ...x, categoria: categoria || null } : x))
+    setCargosSinCat(prev => prev.filter(x => x.id !== mov.id))
+    showToast(categoria ? `Categorizado como ${categoria.trim()}` : 'Categoría quitada')
+  }
+
+  // Vista de tanda: cargos de TODAS las cartolas sin categoría y sin vínculo,
+  // para despachar los históricos sin navegar mes a mes.
+  const loadCargosSinCategoria = async () => {
+    setLoadingTanda(true)
+    const { data: movs } = await supabase.from('movimientos')
+      .select('id, fecha, descripcion, monto, n_documento, categoria, chequera_detalle_id, cartola_id, cartolas(mes,anio)')
+      .lt('monto', 0).is('categoria', null).is('chequera_detalle_id', null)
+      .order('fecha', { ascending: false })
+    const lista = movs || []
+    // Los que tienen un pago de cuenta por pagar vinculado ya traen categoría
+    // por cascada: no son parte de la tanda.
+    let conCxP = new Set()
+    if (lista.length > 0) {
+      const { data: pcs } = await supabase.from('pagos_cuenta')
+        .select('movimiento_id').in('movimiento_id', lista.map(m => m.id))
+      conCxP = new Set((pcs || []).map(p => p.movimiento_id).filter(Boolean))
+    }
+    setCargosSinCat(lista.filter(m => !conCxP.has(m.id)))
+    setLoadingTanda(false)
+  }
+
+  // ── Parte C: vincular una devolución a su cargo ────────────
+  const abrirSelectorDevolucion = async (abono) => {
+    const { data } = await supabase.from('movimientos')
+      .select('id, fecha, descripcion, monto, n_documento, cartolas(mes,anio)')
+      .eq('monto', -abono.monto)
+      .order('fecha', { ascending: false })
+    // Candidatos por monto exacto, ordenados por cercanía de fecha al abono.
+    const dist = (f) => Math.abs(new Date(`${f}T00:00:00`) - new Date(`${abono.fecha}T00:00:00`))
+    const candidatos = (data || []).sort((a, b) => dist(a.fecha) - dist(b.fecha))
+    setSelectorDevolucion({ abono, candidatos })
+    setDevolucionSel(candidatos[0]?.id || '')
+  }
+
+  const handleVincularDevolucion = async () => {
+    const { abono } = selectorDevolucion
+    if (!devolucionSel) { showToast('Elige el cargo que esta devolución revierte', 'error'); return }
+    setGuardandoDev(true)
+    const { error } = await supabase.from('movimientos')
+      .update({ devolucion_de: devolucionSel }).eq('id', abono.id)
+    setGuardandoDev(false)
+    if (error) { showToast('Error al vincular la devolución: ' + error.message, 'error'); return }
+    showToast('Devolución vinculada: deja de contarse como ingreso y resta en la categoría del cargo')
+    setSelectorDevolucion(null)
+    loadMovimientos(selectedCartola.id)
+  }
+
+  const handleDesvincularDevolucion = async (abono) => {
+    if (!confirm('¿Desvincular esta devolución? Volverá a aparecer como ingreso en el reporte.')) return
+    const { error } = await supabase.from('movimientos').update({ devolucion_de: null }).eq('id', abono.id)
+    if (error) { showToast('Error al desvincular: ' + error.message, 'error'); return }
+    showToast('Devolución desvinculada')
+    loadMovimientos(selectedCartola.id)
+  }
+
   const loadMovimientos = async (cartolaId) => {
     const { data } = await supabase
       .from('movimientos')
       .select('*, socios(nombre,apellido,numero_socio)')
       .eq('cartola_id', cartolaId)
       .order('fecha', { ascending: false })
-    setMovimientos(data || [])
+    const lista = data || []
+    setMovimientos(lista)
+
+    // Datos de la cascada de categoría: la del cheque y la de la cuenta por
+    // pagar que saldó el movimiento. Lo que no viene por ahí se categoriza a
+    // mano sobre el propio movimiento.
+    const idsCheque = [...new Set(lista.map(m => m.chequera_detalle_id).filter(Boolean))]
+    const mapCheque = {}
+    if (idsCheque.length > 0) {
+      const { data: cds } = await supabase.from('chequera_detalle').select('id, categoria').in('id', idsCheque)
+      ;(cds || []).forEach(c => { mapCheque[c.id] = c.categoria })
+    }
+    setCatPorCheque(mapCheque)
+
+    const idsMov = lista.map(m => m.id)
+    const mapCuenta = {}, mapDev = {}
+    if (idsMov.length > 0) {
+      const { data: pcs } = await supabase.from('pagos_cuenta')
+        .select('movimiento_id, cuentas_por_pagar(categoria)').in('movimiento_id', idsMov)
+      ;(pcs || []).forEach(p => { if (p.movimiento_id) mapCuenta[p.movimiento_id] = p.cuentas_por_pagar?.categoria })
+      // Cargo original de las devoluciones de esta cartola, para mostrarlo.
+      const dests = [...new Set(lista.map(m => m.devolucion_de).filter(Boolean))]
+      if (dests.length > 0) {
+        const { data: origs } = await supabase.from('movimientos')
+          .select('id, fecha, descripcion, monto, n_documento').in('id', dests)
+        ;(origs || []).forEach(o => { mapDev[o.id] = o })
+      }
+    }
+    setCuentaPorMov(mapCuenta)
+    setDevolucionDe(mapDev)
 
     const movIds = (data || []).filter(m => m.estado === 'conciliado').map(m => m.id)
     if (movIds.length > 0) {
@@ -1230,6 +1352,11 @@ export default function Cartola() {
               <button className={`btn btn-sm${vista === 'sin_conciliar' ? ' btn-primary' : ''}`} onClick={() => { setVista('sin_conciliar'); loadPagosSinConciliar() }}>
                 <i className="ti ti-alert-circle"></i> Sin conciliar ({pagosSinConciliar.length})
               </button>
+              {esAdmin && (
+                <button className={`btn btn-sm${vista === 'categorizar' ? ' btn-primary' : ''}`} onClick={() => { setVista('categorizar'); loadCargosSinCategoria() }}>
+                  <i className="ti ti-tags"></i> Cargos sin categoría{cargosSinCat.length > 0 ? ` (${cargosSinCat.length})` : ''}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -2027,6 +2154,51 @@ export default function Cartola() {
           </div>
         )
       })()}
+      {vista === 'categorizar' && esAdmin && (
+        <div className="card">
+          <div className="card-header">
+            <div className="card-title"><i className="ti ti-tags"></i> Cargos sin categoría ({cargosSinCat.length})</div>
+            <button className="btn btn-sm" onClick={loadCargosSinCategoria} disabled={loadingTanda}>
+              {loadingTanda ? <><i className="ti ti-loader"></i></> : <><i className="ti ti-refresh"></i> Recargar</>}
+            </button>
+          </div>
+          <div style={{ padding: '0 1.5rem 0.75rem', fontSize: 12, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+            Cargos de todas las cartolas que no llegaron por cheque ni por cuenta por pagar y todavía no tienen categoría.
+            Sin categorizar caen a <strong>"Otros gastos"</strong> en el reporte financiero. Cada selección se guarda sola y la fila sale de la lista.
+          </div>
+          {loadingTanda ? (
+            <div className="empty-state"><i className="ti ti-loader"></i>Cargando…</div>
+          ) : cargosSinCat.length === 0 ? (
+            <div className="empty-state"><i className="ti ti-circle-check" style={{ color: '#5dcaa5' }}></i>Todos los cargos están categorizados</div>
+          ) : (
+            <table>
+              <thead><tr><th>Fecha</th><th>Cartola</th><th>Descripción</th><th>N° doc</th><th>Monto</th><th style={{ width: 220 }}>Categoría</th></tr></thead>
+              <tbody>
+                {cargosSinCat.map(m => (
+                  <tr key={m.id} style={{ borderLeft: '2px solid var(--danger)' }}>
+                    <td style={{ color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{m.fecha.split('-').reverse().join('/')}</td>
+                    <td style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', whiteSpace: 'nowrap' }}>
+                      {m.cartolas ? `${NOMBRES_MES[m.cartolas.mes]} ${m.cartolas.anio}` : '—'}
+                    </td>
+                    <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.descripcion}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-dim)' }}>{m.n_documento || '—'}</td>
+                    <td className="amount-neg" style={{ whiteSpace: 'nowrap' }}>{formatearMontoConSimbolo(Math.abs(m.monto))}</td>
+                    <td>
+                      <select value="" disabled={guardandoCat === m.id}
+                        onChange={e => e.target.value && handleCategorizar(m, e.target.value)}
+                        style={{ fontSize: 12, padding: '3px 6px', width: '100%' }}>
+                        <option value="">{guardandoCat === m.id ? 'Guardando…' : 'Elegir categoría…'}</option>
+                        {categoriasGasto.map(c => <option key={c.id} value={c.nombre}>{c.nombre.trim()}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+
       {vista === 'movimientos' && selectedCartola && (
         <>
           {/* Banco y resumen */}
@@ -2111,7 +2283,7 @@ export default function Cartola() {
               <div className="empty-state"><i className="ti ti-list-off"></i>Sin movimientos con ese filtro</div>
             ) : (
               <table>
-                <thead><tr><th>Fecha</th><th>Descripción</th><th>RUT detectado</th><th>Monto</th><th>Estado</th></tr></thead>
+                <thead><tr><th>Fecha</th><th>Descripción</th><th>RUT detectado</th><th>Monto</th><th>Categoría / devolución</th><th>Estado</th></tr></thead>
                 <tbody>
                   {filtrados.map(m => (
                     <tr key={m.id} style={{ borderLeft: `2px solid ${m.tipo === 'abono' ? 'var(--success)' : 'var(--danger)'}` }}>
@@ -2120,6 +2292,47 @@ export default function Cartola() {
                       <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{m.rut_detectado || '—'}</td>
                       <td className={m.tipo === 'abono' ? 'amount-pos' : 'amount-neg'}>
                         {m.tipo === 'abono' ? '+' : ''}{formatearMontoConSimbolo(Math.abs(m.monto))}
+                      </td>
+                      <td style={{ minWidth: 190 }}>
+                        {m.monto < 0 ? (
+                          sinVinculo(m) && esAdmin ? (
+                            <select value={m.categoria || ''} disabled={guardandoCat === m.id}
+                              onChange={e => handleCategorizar(m, e.target.value)}
+                              style={{ fontSize: 12, padding: '3px 6px', width: '100%' }}
+                              title="Este cargo no llegó por cheque ni por cuenta por pagar: su categoría se escribe acá">
+                              <option value="">— sin categoría —</option>
+                              {categoriasGasto.map(c => <option key={c.id} value={c.nombre}>{c.nombre.trim()}</option>)}
+                            </select>
+                          ) : (
+                            <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif' }}>
+                              {categoriaDeMovimiento(m)}
+                              {!sinVinculo(m) && (
+                                <span style={{ color: 'var(--text-dim)' }}> · {m.chequera_detalle_id ? 'por cheque' : 'por cuenta'}</span>
+                              )}
+                            </span>
+                          )
+                        ) : m.devolucion_de ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 6px', borderRadius: 4, background: 'rgba(29,158,117,0.15)', color: '#5dcaa5', alignSelf: 'flex-start' }}>
+                              <i className="ti ti-arrow-back-up" style={{ fontSize: 11 }}></i> Devolución
+                            </span>
+                            <span style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                              del cargo {devolucionDe[m.devolucion_de]?.fecha?.split('-').reverse().join('/') || '—'}
+                              {devolucionDe[m.devolucion_de]?.n_documento ? ` · N°${devolucionDe[m.devolucion_de].n_documento}` : ''}
+                            </span>
+                            {esAdmin && (
+                              <button className="btn btn-sm" style={{ fontSize: 10, alignSelf: 'flex-start' }}
+                                onClick={() => handleDesvincularDevolucion(m)}>Desvincular</button>
+                            )}
+                          </div>
+                        ) : esAdmin ? (
+                          <button className="btn btn-sm"
+                            style={{ fontSize: 10, color: /protest/i.test(m.descripcion || '') ? '#fac775' : 'var(--text-muted)', borderColor: /protest/i.test(m.descripcion || '') ? 'rgba(239,159,39,0.4)' : 'var(--border)' }}
+                            onClick={() => abrirSelectorDevolucion(m)}
+                            title="Vincular este abono al cargo que revierte">
+                            <i className="ti ti-arrow-back-up"></i> Es devolución de…
+                          </button>
+                        ) : null}
                       </td>
                       <td>
                         {m.estado === 'conciliado' && <span className="badge badge-active">Conciliado</span>}
@@ -2134,6 +2347,61 @@ export default function Cartola() {
           </div>
         </>
       )}
+
+      {/* Modal: vincular un abono como devolución de un cargo */}
+      {selectorDevolucion && (() => {
+        const { abono, candidatos } = selectorDevolucion
+        return (
+          <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setSelectorDevolucion(null)}>
+            <div className="modal" style={{ width: 620, maxHeight: '90vh', overflowY: 'auto' }}>
+              <div className="modal-header">
+                <div className="modal-title">Es devolución de…</div>
+                <button className="btn btn-sm" onClick={() => setSelectorDevolucion(null)}><i className="ti ti-x"></i></button>
+              </div>
+              <div style={{ padding: '0.5rem 1.25rem 0.75rem', fontSize: 13, color: '#c8d0dc', fontFamily: 'sans-serif' }}>
+                Abono del <strong>{abono.fecha.split('-').reverse().join('/')}</strong> por{' '}
+                <strong style={{ color: '#5dcaa5' }}>{formatearMontoConSimbolo(abono.monto)}</strong>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{abono.descripcion}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                  Al vincularlo deja de contarse como ingreso y resta dentro de la categoría del cargo que revierte.
+                </div>
+              </div>
+              <div style={{ padding: '0 1.25rem 1rem' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: 1, fontFamily: 'sans-serif', marginBottom: 6 }}>
+                  Cargos por el mismo monto ({candidatos.length}) — ordenados por cercanía de fecha
+                </div>
+                {candidatos.length === 0 ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>
+                    No hay ningún cargo por {formatearMontoConSimbolo(abono.monto)} en el sistema.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {candidatos.map(c => (
+                      <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', border: `0.5px solid ${devolucionSel === c.id ? 'var(--gold)' : 'var(--border)'}`, borderRadius: 8, cursor: 'pointer' }}>
+                        <input type="radio" name="devolucion" checked={devolucionSel === c.id} onChange={() => setDevolucionSel(c.id)} />
+                        <span style={{ fontSize: 13, color: '#c8d0dc', whiteSpace: 'nowrap' }}>{c.fecha.split('-').reverse().join('/')}</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif', whiteSpace: 'nowrap' }}>
+                          {c.cartolas ? `${NOMBRES_MES[c.cartolas.mes]} ${c.cartolas.anio}` : '—'}
+                        </span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'sans-serif', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {c.descripcion}
+                        </span>
+                        {c.n_documento && <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--gold-dim)' }}>N°{c.n_documento}</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button className="btn" onClick={() => setSelectorDevolucion(null)}>Cancelar</button>
+                <button className="btn btn-primary" onClick={handleVincularDevolucion} disabled={guardandoDev || !devolucionSel}>
+                  {guardandoDev ? <><i className="ti ti-loader"></i> Vinculando…</> : <><i className="ti ti-link"></i> Vincular devolución</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Modal: marcar un pago como "conciliación no aplica" */}
       {marcarNoAplica && (

@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { useToast } from '../lib/useToast.jsx'
 import { formatearMontoConSimbolo } from '../lib/montos'
-
-const CATEGORIA_SIN = 'Otros gastos'
+import { resolverCategoriaCargo, CATEGORIA_SIN as CAT_SIN, ETIQUETA_DEVOLUCION } from '../lib/categorias'
 
 const NOMBRES_MES = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 
@@ -97,6 +96,62 @@ export default function ReporteFinanciero() {
       const movimientos = movRes.data || []
       const pagosCP = pagosCPRes.data || []
 
+      // Cascada de categoría (Parte A): para cada cargo del rango se necesita
+      // saber si una cuenta por pagar lo saldó. Se consulta por movimiento_id y
+      // no por fecha_pago: el pago puede estar fechado fuera del rango.
+      const movIds = movimientos.map(m => m.id)
+      const cuentaPorMovimiento = {}
+      if (movIds.length > 0) {
+        const { data: pagosDeMov } = await supabase.from('pagos_cuenta')
+          .select('movimiento_id, cuentas_por_pagar(categoria)')
+          .in('movimiento_id', movIds)
+        ;(pagosDeMov || []).forEach(p => {
+          if (p.movimiento_id) cuentaPorMovimiento[p.movimiento_id] = p.cuentas_por_pagar?.categoria
+        })
+      }
+
+      // Devoluciones: abonos vinculados al cargo que revierten. Se traen todas
+      // (son pocas) para poder excluir sus otros_ingresos aunque la fecha del
+      // ingreso y la del movimiento no coincidan.
+      const { data: devsTodas } = await supabase.from('movimientos')
+        .select('id, fecha, descripcion, monto, devolucion_de')
+        .not('devolucion_de', 'is', null)
+      const devoluciones = devsTodas || []
+      const idsDevolucion = new Set(devoluciones.map(d => d.id))
+
+      // Cargo original de cada devolución del rango: puede estar en otro período,
+      // así que se consulta aparte en vez de buscarlo entre los movimientos ya
+      // cargados. Hace falta para resolver en qué categoría se netea.
+      const devsEnRango = devoluciones.filter(d => d.fecha >= fechaInicio && d.fecha <= fechaFin)
+      const cargosOriginales = {}
+      if (devsEnRango.length > 0) {
+        const { data: origs } = await supabase.from('movimientos')
+          .select('id, fecha, categoria, chequera_detalle_id, chequera_detalle(categoria)')
+          .in('id', devsEnRango.map(d => d.devolucion_de))
+        const porId = Object.fromEntries((origs || []).map(o => [o.id, o]))
+        // La categoría del cargo original se resuelve con la misma cascada, pero
+        // su eslabón de cuenta por pagar se pide en el mismo lote de arriba
+        // cuando el cargo está en el rango; si no, queda en su propia categoría.
+        const idsOrig = (origs || []).map(o => o.id)
+        const cuentaPorOrig = { ...cuentaPorMovimiento }
+        if (idsOrig.length > 0) {
+          const { data: pagosOrig } = await supabase.from('pagos_cuenta')
+            .select('movimiento_id, cuentas_por_pagar(categoria)')
+            .in('movimiento_id', idsOrig)
+          ;(pagosOrig || []).forEach(p => {
+            if (p.movimiento_id) cuentaPorOrig[p.movimiento_id] = p.cuentas_por_pagar?.categoria
+          })
+        }
+        devsEnRango.forEach(d => {
+          const o = porId[d.devolucion_de]
+          cargosOriginales[d.id] = resolverCategoriaCargo({
+            cheque: o?.chequera_detalle?.categoria,
+            cuenta: cuentaPorOrig[o?.id],
+            movimiento: o?.categoria,
+          })
+        })
+      }
+
       // Saldo anterior: saldo_final de la cartola del mes previo al rango.
       const ant = mesAnterior(fechaDesde)
       const { data: cartolaAnt } = await supabase.from('cartolas')
@@ -166,7 +221,12 @@ export default function ReporteFinanciero() {
         g.items.push(item)
         g.total += monto
       }
-      otrosIng.forEach(o => addOtro(o.concepto || 'Otros ingresos',
+      // D3: un ingreso cuyo movimiento ya está vinculado como devolución deja de
+      // ser ingreso — ya resta en la categoría de egreso del cargo original.
+      // Si la devolución NO está vinculada, se queda acá (D4): así el reporte
+      // sigue cuadrando mientras el backfill esté a medias.
+      const otrosIngVisibles = otrosIng.filter(o => !(o.movimiento_id && idsDevolucion.has(o.movimiento_id)))
+      otrosIngVisibles.forEach(o => addOtro(o.concepto || 'Otros ingresos',
         { fecha: o.fecha, descripcion: o.descripcion || '', concepto: o.concepto, monto: o.monto }, o.monto))
       otrosPagos.forEach(p => addOtro(p.concepto || 'Otros ingresos',
         { fecha: p.fecha_pago, descripcion: p.socios ? `${p.socios.nombre} ${p.socios.apellido} (${p.socios.numero_socio})` : 'Socio', concepto: p.concepto, monto: p.monto }, p.monto))
@@ -188,10 +248,15 @@ export default function ReporteFinanciero() {
       // Categoría del egreso. Los nombres vienen de plan_cuentas y algunos traen
       // espacios al borde ("Clases Esquí "), así que se recortan para que no
       // generen dos líneas. Sin categoría → "Otros gastos": nunca se pierde.
-      const categoriaDe = (valor) => (valor || '').trim() || CATEGORIA_SIN
       movimientos.forEach(m => {
         const monto = Math.abs(m.monto)
-        addEgreso(categoriaDe(m.chequera_detalle?.categoria), {
+        // Cascada: cheque → cuenta por pagar → categoría del movimiento → Otros gastos.
+        const cat = resolverCategoriaCargo({
+          cheque: m.chequera_detalle?.categoria,
+          cuenta: cuentaPorMovimiento[m.id],
+          movimiento: m.categoria,
+        })
+        addEgreso(cat, {
           fecha: m.fecha,
           proveedor: m.chequera_detalle?.beneficiario || '',
           // El concepto del cheque pasa al detalle: antes era la etiqueta de la línea.
@@ -200,6 +265,20 @@ export default function ReporteFinanciero() {
           cheque: m.chequera_detalle?.folio ? `N°${m.chequera_detalle.folio}` : '',
         }, monto)
       })
+
+      // Devoluciones vinculadas: restan DENTRO de la categoría del cargo que
+      // revierten, no como ingreso. Así la categoría muestra el neto real y el
+      // dinero no aparece dos veces en el reporte.
+      devsEnRango.forEach(d => {
+        addEgreso(cargosOriginales[d.id] || CAT_SIN, {
+          fecha: d.fecha,
+          proveedor: '',
+          descripcion: ETIQUETA_DEVOLUCION,
+          monto: -d.monto,
+          cheque: '',
+          devolucion: true,
+        }, -d.monto)
+      })
       pagosCP.forEach(p => {
         // Ya contado vía el movimiento de cartola: por cheque (chequera_detalle_id)
         // o por vínculo directo del pago con el movimiento (movimiento_id, que usan
@@ -207,7 +286,7 @@ export default function ReporteFinanciero() {
         // condición el egreso se sumaba dos veces. Este guard no cambia: la
         // categorización altera cómo se agrupa, no qué se cuenta.
         if (p.chequera_detalle_id || p.movimiento_id) return
-        addEgreso(categoriaDe(p.cuentas_por_pagar?.categoria), {
+        addEgreso(resolverCategoriaCargo({ cuenta: p.cuentas_por_pagar?.categoria }), {
           fecha: p.fecha_pago,
           proveedor: p.cuentas_por_pagar?.proveedores?.nombre || '',
           descripcion: p.cuentas_por_pagar?.concepto || '',
@@ -418,10 +497,12 @@ export default function ReporteFinanciero() {
                     <td style={{ padding: '3px 12px' }}>
                       {it.proveedor && <span style={{ color: '#c8d0dc' }}>{it.proveedor}</span>}
                       {it.proveedor && it.descripcion && <span style={{ color: 'var(--text-dim)' }}> · </span>}
-                      {it.descripcion && <span style={{ color: 'var(--text-muted)' }}>{it.descripcion}</span>}
+                      {it.descripcion && <span style={{ color: it.devolucion ? '#5dcaa5' : 'var(--text-muted)' }}>{it.descripcion}</span>}
                       {it.cheque && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--gold-dim)' }}>{it.cheque}</span>}
                     </td>
-                    <td style={{ padding: '3px 12px', textAlign: 'right', fontFamily: 'monospace', color: '#c8d0dc' }}>{formatearMontoConSimbolo(it.monto)}</td>
+                    <td style={{ padding: '3px 12px', textAlign: 'right', fontFamily: 'monospace', color: it.monto < 0 ? '#5dcaa5' : '#c8d0dc' }}>
+                      {it.monto < 0 ? `− ${formatearMontoConSimbolo(Math.abs(it.monto))}` : formatearMontoConSimbolo(it.monto)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
