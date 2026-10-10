@@ -215,11 +215,14 @@ export default function ReporteFinanciero() {
       const otrosIngAgrupados = {}
       const addOtro = (etiqueta, item, monto) => {
         const key = normConcepto(etiqueta)
-        if (!otrosIngAgrupados[key]) otrosIngAgrupados[key] = { concepto: etiqueta, items: [], total: 0 }
+        if (!otrosIngAgrupados[key]) otrosIngAgrupados[key] = { concepto: etiqueta, items: [], total: 0, canje: 0 }
         const g = otrosIngAgrupados[key]
         if (puntajeEtiqueta(etiqueta) > puntajeEtiqueta(g.concepto)) g.concepto = etiqueta
         g.items.push(item)
         g.total += monto
+        // Cuánto del total de la categoría se saldó con servicios y no con
+        // plata: es lo que no va a aparecer en ninguna cartola.
+        if (item.canje) g.canje += monto
       }
       // D3: un ingreso cuyo movimiento ya está vinculado como devolución deja de
       // ser ingreso — ya resta en la categoría de egreso del cargo original.
@@ -229,9 +232,17 @@ export default function ReporteFinanciero() {
       otrosIngVisibles.forEach(o => addOtro(o.concepto || 'Otros ingresos',
         { fecha: o.fecha, descripcion: o.descripcion || '', concepto: o.concepto, monto: o.monto }, o.monto))
       otrosPagos.forEach(p => addOtro(p.concepto || 'Otros ingresos',
-        { fecha: p.fecha_pago, descripcion: p.socios ? `${p.socios.nombre} ${p.socios.apellido} (${p.socios.numero_socio})` : 'Socio', concepto: p.concepto, monto: p.monto }, p.monto))
+        {
+          fecha: p.fecha_pago,
+          descripcion: p.socios ? `${p.socios.nombre} ${p.socios.apellido} (${p.socios.numero_socio})` : 'Socio',
+          concepto: p.concepto,
+          monto: p.monto,
+          canje: p.forma_pago === 'canje',
+          canjeComentario: p.forma_pago === 'canje' ? (p.comentario || '') : '',
+        }, p.monto))
 
       const totalCuotas = cuotasSociales.reduce((t, p) => t + p.monto, 0)
+      const totalCuotasCanje = cuotasSociales.filter(p => p.forma_pago === 'canje').reduce((t, p) => t + p.monto, 0)
       const totalOtrosIng = Object.values(otrosIngAgrupados).reduce((t, g) => t + g.total, 0)
       const totalPeriodoIng = totalCuotas + totalOtrosIng
 
@@ -375,7 +386,7 @@ export default function ReporteFinanciero() {
       setDatos({
         rango: { fechaDesde, fechaHasta, fechaInicio, fechaFin, aD, mD, aH, mH, ultimoDia },
         cuotasSociales, otrosIngAgrupados,
-        totalCuotas, totalOtrosIng, totalPeriodoIng,
+        totalCuotas, totalCuotasCanje, totalOtrosIng, totalPeriodoIng,
         egresosAgrupados, totalEgresos,
         totalChequesPorCobrar, detalleChequesPorCobrar,
         totalCanjes, detalleCanjes,
@@ -462,7 +473,7 @@ export default function ReporteFinanciero() {
 
   const toggle = (id) => setExpandido(expandido === id ? null : id)
 
-  const renderFila = (id, label, monto, items = null, color = 'inherit') => {
+  const renderFila = (id, label, monto, items = null, color = 'inherit', sufijo = null) => {
     const tieneDetalle = items && items.length > 0
     const open = expandido === id
     return (
@@ -477,6 +488,9 @@ export default function ReporteFinanciero() {
           <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {tieneDetalle && <i className={`ti ti-chevron-${open ? 'down' : 'right'}`} style={{ fontSize: 12, color: 'var(--text-dim)' }}></i>}
             {label}
+            {sufijo && (
+              <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'sans-serif' }}>{sufijo}</span>
+            )}
           </span>
           <strong style={{ color }}>{formatearMontoConSimbolo(monto)}</strong>
         </div>
@@ -499,6 +513,20 @@ export default function ReporteFinanciero() {
                       {it.proveedor && it.descripcion && <span style={{ color: 'var(--text-dim)' }}> · </span>}
                       {it.descripcion && <span style={{ color: it.devolucion ? '#5dcaa5' : 'var(--text-muted)' }}>{it.descripcion}</span>}
                       {it.cheque && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--gold-dim)' }}>{it.cheque}</span>}
+                      {it.canje && (
+                        <span title={it.canjeComentario || 'Cuota saldada con servicios: no genera movimiento bancario'}
+                          style={{ marginLeft: 6, fontSize: 9, fontWeight: 600, padding: '1px 5px', borderRadius: 3, background: 'rgba(239,159,39,0.15)', color: '#fac775', whiteSpace: 'nowrap' }}>
+                          Compensado — sin flujo bancario
+                        </span>
+                      )}
+                      {it.canje && it.canjeComentario && (
+                        // Solo la primera línea: el comentario acumula trazas de
+                        // auditoría ("Conciliación no aplica — …") que acá serían
+                        // ruido. El texto completo queda en el tooltip del badge.
+                        <div style={{ fontSize: 10, color: 'var(--text-dim)', fontFamily: 'sans-serif', marginTop: 2 }}>
+                          {it.canjeComentario.split('\n')[0].trim()}
+                        </div>
+                      )}
                     </td>
                     <td style={{ padding: '3px 12px', textAlign: 'right', fontFamily: 'monospace', color: it.monto < 0 ? '#5dcaa5' : '#c8d0dc' }}>
                       {it.monto < 0 ? `− ${formatearMontoConSimbolo(Math.abs(it.monto))}` : formatearMontoConSimbolo(it.monto)}
@@ -625,9 +653,13 @@ export default function ReporteFinanciero() {
                   proveedor: p.socios ? `${p.socios.nombre} ${p.socios.apellido}` : 'Socio',
                   descripcion: p.socios?.numero_socio || '',
                   monto: p.monto,
-                })), '#5dcaa5')}
+                  canje: p.forma_pago === 'canje',
+                  canjeComentario: p.forma_pago === 'canje' ? (p.comentario || '') : '',
+                })), '#5dcaa5',
+                datos.totalCuotasCanje > 0 ? `(incluye ${formatearMontoConSimbolo(datos.totalCuotasCanje)} compensados)` : null)}
               {Object.entries(datos.otrosIngAgrupados).filter(([, g]) => g.total !== 0).map(([key, g]) =>
-                <div key={key}>{renderFila(`ing-${key}`, g.concepto, g.total, g.items, '#5dcaa5')}</div>
+                <div key={key}>{renderFila(`ing-${key}`, g.concepto, g.total, g.items, '#5dcaa5',
+                  g.canje > 0 ? `(incluye ${formatearMontoConSimbolo(g.canje)} compensados)` : null)}</div>
               )}
               {/* Totales */}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.75rem 1rem', borderTop: '2px solid var(--border-strong)', fontWeight: 'bold', fontSize: 14 }}>
